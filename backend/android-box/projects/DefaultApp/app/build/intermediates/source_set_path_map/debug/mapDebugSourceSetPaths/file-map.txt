@@ -1,0 +1,31 @@
+com.example.myfirstapp-constraintlayout-2.1.4-0 C:\Users\skaif\.gradle\caches\8.10.2\transforms\0e07f3199d1b8f19290e6b5dab668c26\transformed\constraintlayout-2.1.4\res
+com.example.myfirstapp-material-1.9.0-1 C:\Users\skaif\.gradle\caches\8.10.2\transforms\17ccdec3be268264d8360ef5335295be\transformed\material-1.9.0\res
+com.example.myfirstapp-fragment-1.3.6-2 C:\Users\skaif\.gradle\caches\8.10.2\transforms\19901eebc3fceb7acf8772ee49b14ed5\transformed\fragment-1.3.6\res
+com.example.myfirstapp-jetified-emoji2-views-helper-1.2.0-3 C:\Users\skaif\.gradle\caches\8.10.2\transforms\1be2c72f0a4c08eaca08ec84f9709471\transformed\jetified-emoji2-views-helper-1.2.0\res
+com.example.myfirstapp-lifecycle-viewmodel-2.5.1-4 C:\Users\skaif\.gradle\caches\8.10.2\transforms\42f112d25438df675af8f86be0c7b8ac\transformed\lifecycle-viewmodel-2.5.1\res
+com.example.myfirstapp-jetified-viewpager2-1.0.0-5 C:\Users\skaif\.gradle\caches\8.10.2\transforms\44e1c8266cbb949267fbd99781521ff5\transformed\jetified-viewpager2-1.0.0\res
+com.example.myfirstapp-transition-1.2.0-6 C:\Users\skaif\.gradle\caches\8.10.2\transforms\468d0f259acf8ac90d4366739409571f\transformed\transition-1.2.0\res
+com.example.myfirstapp-recyclerview-1.1.0-7 C:\Users\skaif\.gradle\caches\8.10.2\transforms\49b4b6c6db69188436dae6b5907787fb\transformed\recyclerview-1.1.0\res
+com.example.myfirstapp-jetified-activity-1.6.0-8 C:\Users\skaif\.gradle\caches\8.10.2\transforms\5ab4342cdc41b2362ec5b08455105e3d\transformed\jetified-activity-1.6.0\res
+com.example.myfirstapp-jetified-emoji2-1.2.0-9 C:\Users\skaif\.gradle\caches\8.10.2\transforms\5f714343543c554a5443a7b4086c4ae6\transformed\jetified-emoji2-1.2.0\res
+com.example.myfirstapp-jetified-core-ktx-1.9.0-10 C:\Users\skaif\.gradle\caches\8.10.2\transforms\68cf4e118d9207d88f78d34fe3f1148a\transformed\jetified-core-ktx-1.9.0\res
+com.example.myfirstapp-jetified-annotation-experimental-1.3.0-11 C:\Users\skaif\.gradle\caches\8.10.2\transforms\796eca3e6d486c341485e09baa19e842\transformed\jetified-annotation-experimental-1.3.0\res
+com.example.myfirstapp-cardview-1.0.0-12 C:\Users\skaif\.gradle\caches\8.10.2\transforms\91463ea306fd668f095ae7b070649095\transformed\cardview-1.0.0\res
+com.example.myfirstapp-lifecycle-runtime-2.5.1-13 C:\Users\skaif\.gradle\caches\8.10.2\transforms\96bc96470291d99bd55e20018f1ce904\transformed\lifecycle-runtime-2.5.1\res
+com.example.myfirstapp-jetified-startup-runtime-1.1.1-14 C:\Users\skaif\.gradle\caches\8.10.2\transforms\992f2342f45750d167d4a113a4b7e271\transformed\jetified-startup-runtime-1.1.1\res
+com.example.myfirstapp-jetified-lifecycle-viewmodel-savedstate-2.5.1-15 C:\Users\skaif\.gradle\caches\8.10.2\transforms\9a232847cef0259406e5f455204c224f\transformed\jetified-lifecycle-viewmodel-savedstate-2.5.1\res
+com.example.myfirstapp-appcompat-1.6.1-16 C:\Users\skaif\.gradle\caches\8.10.2\transforms\9a3a396f4c715a047e661a895f24c282\transformed\appcompat-1.6.1\res
+com.example.myfirstapp-jetified-lifecycle-process-2.4.1-17 C:\Users\skaif\.gradle\caches\8.10.2\transforms\9e6461a2f2cb4b96102dad7e33563ccd\transformed\jetified-lifecycle-process-2.4.1\res
+com.example.myfirstapp-drawerlayout-1.1.1-18 C:\Users\skaif\.gradle\caches\8.10.2\transforms\a9189783898199593b1e4c1294e8e111\transformed\drawerlayout-1.1.1\res
+com.example.myfirstapp-coordinatorlayout-1.1.0-19 C:\Users\skaif\.gradle\caches\8.10.2\transforms\abdd6f05cd13d427a4b4dcb30acea8a3\transformed\coordinatorlayout-1.1.0\res
+com.example.myfirstapp-core-1.9.0-20 C:\Users\skaif\.gradle\caches\8.10.2\transforms\adb0c0c8f407fa443cbac3480d6ddaf0\transformed\core-1.9.0\res
+com.example.myfirstapp-lifecycle-livedata-core-2.5.1-21 C:\Users\skaif\.gradle\caches\8.10.2\transforms\b2725deb273b63d9b82756e634657d70\transformed\lifecycle-livedata-core-2.5.1\res
+com.example.myfirstapp-jetified-savedstate-1.2.0-22 C:\Users\skaif\.gradle\caches\8.10.2\transforms\bad4929b034f1f8768493990c6efe4fc\transformed\jetified-savedstate-1.2.0\res
+com.example.myfirstapp-jetified-appcompat-resources-1.6.1-23 C:\Users\skaif\.gradle\caches\8.10.2\transforms\cffea23771f81a888fcb2da6c81c08f0\transformed\jetified-appcompat-resources-1.6.1\res
+com.example.myfirstapp-pngs-24 C:\Users\skaif\Downloads\BrainBox (2)\BrainBox\BrainBox\brainbox\backend\android-box\projects\DefaultApp\app\build\generated\res\pngs\debug
+com.example.myfirstapp-resValues-25 C:\Users\skaif\Downloads\BrainBox (2)\BrainBox\BrainBox\brainbox\backend\android-box\projects\DefaultApp\app\build\generated\res\resValues\debug
+com.example.myfirstapp-packageDebugResources-26 C:\Users\skaif\Downloads\BrainBox (2)\BrainBox\BrainBox\brainbox\backend\android-box\projects\DefaultApp\app\build\intermediates\incremental\debug\packageDebugResources\merged.dir
+com.example.myfirstapp-packageDebugResources-27 C:\Users\skaif\Downloads\BrainBox (2)\BrainBox\BrainBox\brainbox\backend\android-box\projects\DefaultApp\app\build\intermediates\incremental\debug\packageDebugResources\stripped.dir
+com.example.myfirstapp-debug-28 C:\Users\skaif\Downloads\BrainBox (2)\BrainBox\BrainBox\brainbox\backend\android-box\projects\DefaultApp\app\build\intermediates\merged_res\debug\mergeDebugResources
+com.example.myfirstapp-debug-29 C:\Users\skaif\Downloads\BrainBox (2)\BrainBox\BrainBox\brainbox\backend\android-box\projects\DefaultApp\app\src\debug\res
+com.example.myfirstapp-main-30 C:\Users\skaif\Downloads\BrainBox (2)\BrainBox\BrainBox\brainbox\backend\android-box\projects\DefaultApp\app\src\main\res

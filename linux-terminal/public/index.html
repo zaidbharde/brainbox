@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>VER Linux Terminal</title>
+    <link rel="stylesheet" href="/vendor/xterm/css/xterm.css" />
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="titlebar">
+        <div class="traffic-lights" aria-hidden="true">
+          <span class="dot red"></span>
+          <span class="dot yellow"></span>
+          <span class="dot green"></span>
+        </div>
+        <div class="title-copy">
+          <strong>VER Linux Terminal</strong>
+          <span id="shell-info">Loading...</span>
+        </div>
+        <div class="titlebar-actions">
+          <button id="btn-learning" class="btn-action" title="Learning Mode">
+            <span class="icon">📚</span>
+            <span class="label">Learn</span>
+          </button>
+          <button id="btn-help" class="btn-action" title="Quick Help">
+            <span class="icon">❓</span>
+          </button>
+          <div id="status" class="status">Connecting...</div>
+        </div>
+      </header>
+
+      <div id="learning-panel" class="learning-panel hidden">
+        <div class="learning-header">
+          <h3>Learning Mode</h3>
+          <button id="close-learning" class="btn-close">×</button>
+        </div>
+        <div class="learning-lessons" id="learning-lessons"></div>
+      </div>
+
+      <div id="help-panel" class="help-panel hidden">
+        <div class="help-header">
+          <h3>Quick Reference</h3>
+          <button id="close-help" class="btn-close">×</button>
+        </div>
+        <div class="help-content" id="help-content">
+          <div class="help-section">
+            <h4>Navigation</h4>
+            <code>ls</code> - List files<br>
+            <code>cd [dir]</code> - Change directory<br>
+            <code>pwd</code> - Print working directory<br>
+            <code>..</code> - Parent directory
+          </div>
+          <div class="help-section">
+            <h4>Files</h4>
+            <code>touch [file]</code> - Create file<br>
+            <code>mkdir [dir]</code> - Create directory<br>
+            <code>rm [file]</code> - Remove file<br>
+            <code>cp [src] [dest]</code> - Copy<br>
+            <code>mv [src] [dest]</code> - Move/Rename
+          </div>
+          <div class="help-section">
+            <h4>Viewing</h4>
+            <code>cat [file]</code> - View file<br>
+            <code>head [file]</code> - First 10 lines<br>
+            <code>tail [file]</code> - Last 10 lines<br>
+            <code>less [file]</code> - Scroll view
+          </div>
+          <div class="help-section">
+            <h4>System</h4>
+            <code>uname -a</code> - System info<br>
+            <code>whoami</code> - Current user<br>
+            <code>date</code> - Current date<br>
+            <code>clear</code> - Clear screen
+          </div>
+          <div class="help-section">
+            <h4>Search</h4>
+            <code>grep [pattern] [file]</code> - Search<br>
+            <code>find . -name "[name]"</code> - Find files<br>
+            <code>history</code> - Command history
+          </div>
+        </div>
+      </div>
+
+      <main class="terminal-frame">
+        <div id="terminal"></div>
+      </main>
+    </div>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script src="/vendor/xterm/lib/xterm.js"></script>
+    <script src="/vendor/xterm/addon-fit/lib/addon-fit.js"></script>
+    <script src="/app.js"></script>
+  </body>
+</html>

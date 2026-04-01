@@ -1,0 +1,135 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:id="@+id/main"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#000000"
+    android:gravity="center"
+    android:orientation="vertical"
+    android:padding="16dp"
+    tools:context=".MainActivity">
+
+    <ImageView
+        android:layout_width="150dp"
+        android:layout_height="150dp"
+        android:layout_marginBottom="16dp"
+        android:contentDescription="Devil Logo"
+        android:scaleType="fitCenter"
+        android:src="@drawable/devil_logo_png"
+        app:srcCompat="@drawable/screenshot_2026_03_18_035506" />
+
+    <TextView
+        android:id="@+id/statusTextView"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginBottom="32dp"
+        android:text="Player X's Turn"
+        android:textColor="#FF0000"
+        android:textSize="28sp"
+        android:textStyle="bold" />
+
+    <GridLayout
+        android:id="@+id/gridLayout"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:columnCount="3"
+        android:rowCount="3">
+
+        <Button
+            android:id="@+id/btn0"
+            android:layout_width="100dp"
+            android:layout_height="100dp"
+            android:layout_margin="4dp"
+            android:backgroundTint="#1A1A1A"
+            android:textColor="#FF0000"
+            android:textSize="36sp"
+            tools:text="X" />
+
+        <Button
+            android:id="@+id/btn1"
+            android:layout_width="100dp"
+            android:layout_height="100dp"
+            android:layout_margin="4dp"
+            android:backgroundTint="#1A1A1A"
+            android:textColor="#FF0000"
+            android:textSize="36sp" />
+
+        <Button
+            android:id="@+id/btn2"
+            android:layout_width="100dp"
+            android:layout_height="100dp"
+            android:layout_margin="4dp"
+            android:backgroundTint="#1A1A1A"
+            android:textColor="#FF0000"
+            android:textSize="36sp" />
+
+        <Button
+            android:id="@+id/btn3"
+            android:layout_width="100dp"
+            android:layout_height="100dp"
+            android:layout_margin="4dp"
+            android:backgroundTint="#1A1A1A"
+            android:textColor="#FF0000"
+            android:textSize="36sp" />
+
+        <Button
+            android:id="@+id/btn4"
+            android:layout_width="100dp"
+            android:layout_height="100dp"
+            android:layout_margin="4dp"
+            android:backgroundTint="#1A1A1A"
+            android:textColor="#FF0000"
+            android:textSize="36sp" />
+
+        <Button
+            android:id="@+id/btn5"
+            android:layout_width="100dp"
+            android:layout_height="100dp"
+            android:layout_margin="4dp"
+            android:backgroundTint="#1A1A1A"
+            android:textColor="#FF0000"
+            android:textSize="36sp" />
+
+        <Button
+            android:id="@+id/btn6"
+            android:layout_width="100dp"
+            android:layout_height="100dp"
+            android:layout_margin="4dp"
+            android:backgroundTint="#1A1A1A"
+            android:textColor="#FF0000"
+            android:textSize="36sp" />
+
+        <Button
+            android:id="@+id/btn7"
+            android:layout_width="100dp"
+            android:layout_height="100dp"
+            android:layout_margin="4dp"
+            android:backgroundTint="#1A1A1A"
+            android:textColor="#FF0000"
+            android:textSize="36sp" />
+
+        <Button
+            android:id="@+id/btn8"
+            android:layout_width="100dp"
+            android:layout_height="100dp"
+            android:layout_margin="4dp"
+            android:backgroundTint="#1A1A1A"
+            android:textColor="#FF0000"
+            android:textSize="36sp" />
+
+    </GridLayout>
+
+    <Button
+        android:id="@+id/resetButton"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="48dp"
+        android:backgroundTint="#FF0000"
+        android:padding="16dp"
+        android:text="RESET GAME"
+        android:textColor="#FFFFFF"
+        android:textStyle="bold" />
+
+</LinearLayout>

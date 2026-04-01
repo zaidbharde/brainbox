@@ -1,0 +1,28 @@
+{
+  "name": "web-linux-terminal",
+  "version": "1.0.0",
+  "description": "Linux-like terminal in the browser with Express, Socket.IO, and a PTY-backed shell session.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  },
+  "keywords": [
+    "terminal",
+    "websocket",
+    "express",
+    "socket.io",
+    "linux"
+  ],
+  "license": "MIT",
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "@xterm/addon-fit": "^0.10.0",
+    "@xterm/xterm": "^5.5.0",
+    "express": "^4.21.2",
+    "node-pty": "^1.1.0",
+    "socket.io": "^4.8.1"
+  }
+}

@@ -1,0 +1,6 @@
+frontend/node_modules/
+frontend/dist/
+backend/node_modules/
+8086-studio/node_modules/
+8086-studio/dist/
+*.log

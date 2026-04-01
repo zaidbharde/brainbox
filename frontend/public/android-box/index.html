@@ -1,0 +1,3550 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AndroidBox — Browser Android IDE</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600&family=Sora:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.44.0/min/vs/loader.min.js"></script>
+<style>
+:root {
+  --bg-base:#0d0f12; --bg-surface:#13161b; --bg-panel:#191d24;
+  --bg-hover:#1e232c; --bg-active:#252b36; --border:#252b36;
+  --border-bright:#2f3847; --accent:#3ddc84; --accent-dim:#2ab368;
+  --accent-glow:rgba(61,220,132,0.15); --accent2:#4285f4; --accent2-dim:#2d6bcc;
+  --warn:#f9a825; --error:#f44336; --text-primary:#e8eaf0;
+  --text-secondary:#8892a4; --text-muted:#4a5568;
+  --font-mono:'JetBrains Mono',monospace; --font-ui:'Sora',sans-serif;
+  --radius:6px; --sidebar-width:230px; --preview-width:0px;
+  --toolbar-height:44px; --console-height:160px; --menu-height:26px;
+}
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:var(--font-ui);background:var(--bg-base);color:var(--text-primary);height:100vh;overflow:hidden;display:flex;flex-direction:column;font-size:13px}
+
+/* ── ERROR BANNER ── */
+#error-banner{display:none;align-items:center;justify-content:space-between;gap:10px;padding:6px 10px;background:rgba(244,67,54,.12);border-bottom:1px solid rgba(244,67,54,.35);color:var(--error);font-size:12px}
+#error-banner.show{display:flex}
+#error-banner button{background:none;border:none;color:var(--error);cursor:pointer;font-size:14px;line-height:1}
+
+/* ── MENU BAR ── */
+#menubar{height:var(--menu-height);background:var(--bg-surface);border-bottom:1px solid var(--border);display:flex;align-items:center;padding:0 10px;gap:2px;flex-shrink:0;z-index:200;position:relative}
+.menu-item{padding:3px 10px;border-radius:4px;cursor:pointer;font-size:12px;color:var(--text-secondary);transition:all .1s;position:relative}
+.menu-item:hover{background:var(--bg-hover);color:var(--text-primary)}
+.menu-item.active{background:var(--bg-hover);color:var(--text-primary)}
+.dropdown{display:none;position:absolute;top:100%;left:0;background:var(--bg-panel);border:1px solid var(--border-bright);border-radius:var(--radius);min-width:220px;z-index:500;box-shadow:0 12px 40px rgba(0,0,0,.6);padding:4px 0;margin-top:2px}
+.menu-item.active .dropdown{display:block}
+.dd-item{display:flex;align-items:center;gap:8px;padding:7px 14px;cursor:pointer;font-size:12px;color:var(--text-secondary);transition:background .1s;white-space:nowrap}
+.dd-item:hover{background:var(--bg-hover);color:var(--text-primary)}
+.dd-sep{height:1px;background:var(--border);margin:4px 0}
+.dd-kbd{margin-left:auto;font-family:var(--font-mono);font-size:10px;color:var(--text-muted);background:var(--bg-active);padding:1px 5px;border-radius:3px}
+.dd-item .dd-icon{font-size:13px;width:18px;text-align:center;flex-shrink:0}
+
+/* ── TOOLBAR ── */
+#toolbar{height:var(--toolbar-height);background:var(--bg-surface);border-bottom:1px solid var(--border);display:flex;align-items:center;padding:0 10px;gap:5px;flex-shrink:0;z-index:100}
+.logo{display:flex;align-items:center;gap:8px;margin-right:14px}
+.logo-icon{width:26px;height:26px;background:linear-gradient(135deg,#3ddc84,#2ab368);border-radius:7px;display:flex;align-items:center;justify-content:center;font-size:13px}
+.logo-text{font-weight:700;font-size:14px;letter-spacing:-.3px}
+.logo-text span{color:var(--accent)}
+.tsep{width:1px;height:20px;background:var(--border-bright);margin:0 4px}
+.btn{display:flex;align-items:center;gap:5px;padding:5px 10px;border:1px solid var(--border-bright);background:var(--bg-panel);color:var(--text-secondary);border-radius:var(--radius);cursor:pointer;font-family:var(--font-ui);font-size:12px;font-weight:500;transition:all .15s;white-space:nowrap}
+.btn:hover{background:var(--bg-hover);color:var(--text-primary)}
+.btn-accent{background:var(--accent);color:#000;border-color:var(--accent)}
+.btn-accent:hover{background:var(--accent-dim);border-color:var(--accent-dim);color:#000}
+.btn-blue{background:var(--accent2);color:#fff;border-color:var(--accent2)}
+.btn-blue:hover{background:var(--accent2-dim);border-color:var(--accent2-dim)}
+.btn-red{background:#c62828;color:#fff;border-color:#c62828}
+.btn-icon{padding:5px 7px;font-size:14px}
+.btn-sm{padding:3px 8px;font-size:11px}
+.toolbar-right{margin-left:auto;display:flex;align-items:center;gap:5px}
+.project-chip{font-family:var(--font-mono);font-size:11px;color:var(--text-secondary);background:var(--bg-panel);padding:3px 9px;border-radius:var(--radius);border:1px solid var(--border);cursor:pointer;transition:all .15s}
+.project-chip:hover{border-color:var(--accent);color:var(--text-primary)}
+.device-select{background:var(--bg-panel);border:1px solid var(--border);color:var(--text-secondary);font-size:11px;border-radius:6px;padding:3px 6px;outline:none;min-width:160px}
+.device-btn{background:var(--bg-panel);border:1px solid var(--border-bright);color:var(--text-secondary);font-size:11px;border-radius:6px;padding:3px 8px;cursor:pointer}
+.device-btn:hover{color:var(--text-primary);border-color:var(--accent)}
+
+/* ── SYNC STATUS ── */
+.sync-badge{display:flex;align-items:center;gap:5px;font-size:11px;padding:3px 9px;border-radius:12px;font-weight:600;transition:all .3s}
+.sync-badge.synced{background:rgba(61,220,132,.15);color:var(--accent)}
+.sync-badge.syncing{background:rgba(66,133,244,.15);color:var(--accent2)}
+.sync-badge.unsaved{background:rgba(249,168,37,.15);color:var(--warn)}
+.sync-dot{width:6px;height:6px;border-radius:50%;flex-shrink:0}
+.sync-badge.synced .sync-dot{background:var(--accent)}
+.sync-badge.syncing .sync-dot{background:var(--accent2);animation:pulse 1s infinite}
+.sync-badge.unsaved .sync-dot{background:var(--warn)}
+
+/* ── ACTIVITY BAR (left icons) ── */
+#activitybar{width:42px;background:var(--bg-surface);border-right:1px solid var(--border);display:flex;flex-direction:column;align-items:center;padding:6px 0;gap:2px;flex-shrink:0}
+.actbar-btn{width:34px;height:34px;display:flex;align-items:center;justify-content:center;border-radius:8px;cursor:pointer;font-size:17px;color:var(--text-muted);transition:all .15s;position:relative;border:none;background:none}
+.actbar-btn:hover{background:var(--bg-hover);color:var(--text-primary)}
+.actbar-btn.active{background:var(--bg-active);color:var(--accent)}
+.actbar-btn::after{content:attr(data-tip);position:absolute;left:46px;top:50%;transform:translateY(-50%);background:var(--bg-active);color:var(--text-primary);padding:4px 8px;border-radius:4px;font-size:11px;white-space:nowrap;pointer-events:none;opacity:0;transition:opacity .15s;font-family:var(--font-ui);z-index:999;border:1px solid var(--border-bright)}
+.actbar-btn:hover::after{opacity:1}
+.actbar-sep{width:24px;height:1px;background:var(--border);margin:4px 0}
+.actbar-bottom{margin-top:auto}
+
+/* ── SIDE PANELS ── */
+#side-panel{width:var(--sidebar-width);background:var(--bg-surface);border-right:1px solid var(--border);display:flex;flex-direction:column;overflow:hidden;flex-shrink:0;transition:width .2s}
+#side-panel.collapsed{width:0}
+.sp-header{padding:9px 12px 7px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;flex-shrink:0}
+.sp-title{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:var(--text-muted)}
+.sp-actions{display:flex;gap:3px}
+.icon-btn{width:22px;height:22px;display:flex;align-items:center;justify-content:center;border-radius:4px;cursor:pointer;color:var(--text-muted);font-size:12px;transition:all .12s;border:none;background:none}
+.icon-btn:hover{background:var(--bg-hover);color:var(--text-primary)}
+
+/* ── FILE TREE ── */
+#file-tree{flex:1;overflow-y:auto;padding:4px 0}
+.tree-item{display:flex;align-items:center;gap:5px;padding:4px 10px;cursor:pointer;color:var(--text-secondary);font-size:12px;font-family:var(--font-mono);transition:all .1s;position:relative;user-select:none}
+.tree-item:hover{background:var(--bg-hover);color:var(--text-primary)}
+.tree-item.active{background:var(--bg-active);color:var(--accent)}
+.tree-item.active::before{content:'';position:absolute;left:0;top:0;height:100%;width:2px;background:var(--accent);border-radius:0 2px 2px 0}
+.tree-item .item-icon{font-size:13px;flex-shrink:0}
+.tree-folder{font-weight:600;color:var(--text-primary)}
+.tree-folder-arrow{font-size:9px;color:var(--text-muted);transition:transform .15s}
+.tree-folder-arrow.open{transform:rotate(90deg)}
+.ti1{padding-left:22px} .ti2{padding-left:38px} .ti3{padding-left:54px} .ti4{padding-left:70px}
+.file-badge{margin-left:auto;font-size:9px;padding:1px 5px;border-radius:3px;font-weight:600;flex-shrink:0}
+.badge-java{background:rgba(248,152,36,.2);color:#f89824}
+.badge-kt{background:rgba(122,92,206,.2);color:#7a5cce}
+.badge-xml{background:rgba(61,220,132,.2);color:var(--accent)}
+.badge-gradle{background:rgba(66,133,244,.2);color:var(--accent2)}
+.badge-json{background:rgba(255,200,0,.2);color:#ffc800}
+.tree-ctx-menu{position:fixed;background:var(--bg-panel);border:1px solid var(--border-bright);border-radius:var(--radius);z-index:999;padding:4px 0;min-width:160px;box-shadow:0 12px 30px rgba(0,0,0,.5)}
+.ctx-item{display:flex;align-items:center;gap:8px;padding:7px 14px;cursor:pointer;font-size:12px;color:var(--text-secondary);transition:background .1s}
+.ctx-item:hover{background:var(--bg-hover);color:var(--text-primary)}
+.ctx-item.danger{color:var(--error)}
+.ctx-sep{height:1px;background:var(--border);margin:4px 0}
+
+/* ── STRUCTURE PANEL ── */
+#structure-panel{padding:6px 0;overflow-y:auto;flex:1}
+.struct-item{display:flex;align-items:center;gap:6px;padding:4px 12px;cursor:pointer;font-size:11px;color:var(--text-secondary);font-family:var(--font-mono);transition:background .1s}
+.struct-item:hover{background:var(--bg-hover);color:var(--text-primary)}
+.struct-icon{font-size:12px;width:16px;text-align:center}
+.struct-type{font-size:9px;padding:1px 4px;border-radius:3px;margin-left:auto;flex-shrink:0;font-weight:600}
+.st-class{background:rgba(66,133,244,.2);color:var(--accent2)}
+.st-method{background:rgba(61,220,132,.2);color:var(--accent)}
+.st-field{background:rgba(249,168,37,.2);color:var(--warn)}
+.st-interface{background:rgba(122,92,206,.2);color:#7a5cce}
+
+/* ── GIT PANEL ── */
+#git-panel{padding:0;overflow-y:auto;flex:1}
+.git-section-title{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--text-muted);padding:8px 12px 4px}
+.git-file-item{display:flex;align-items:center;gap:6px;padding:4px 12px;cursor:pointer;font-size:11px;font-family:var(--font-mono);transition:background .1s}
+.git-file-item:hover{background:var(--bg-hover)}
+.git-status{width:16px;text-align:center;font-weight:700;font-size:11px}
+.gs-modified{color:var(--warn)} .gs-added{color:var(--accent)} .gs-deleted{color:var(--error)} .gs-untracked{color:var(--text-muted)}
+.git-branch-bar{padding:8px 12px;background:var(--bg-active);border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px;font-size:11px}
+.git-branch-name{font-family:var(--font-mono);color:var(--accent)}
+.git-commit-input{width:100%;background:var(--bg-active);border:1px solid var(--border-bright);border-radius:var(--radius);color:var(--text-primary);font-family:var(--font-ui);font-size:11px;padding:6px 10px;outline:none;margin:8px 12px;width:calc(100% - 24px)}
+.git-commit-input:focus{border-color:var(--accent)}
+.git-actions{padding:4px 12px 8px;display:flex;gap:6px}
+
+/* ── SEARCH PANEL ── */
+#search-panel{padding:8px 10px;display:flex;flex-direction:column;gap:6px;flex:1;overflow-y:auto}
+.search-input-wrap{position:relative}
+.search-input{width:100%;background:var(--bg-active);border:1px solid var(--border-bright);border-radius:var(--radius);color:var(--text-primary);font-family:var(--font-mono);font-size:12px;padding:6px 10px;outline:none}
+.search-input:focus{border-color:var(--accent)}
+.search-opts{display:flex;gap:4px;margin-top:3px}
+.search-opt{padding:2px 7px;border-radius:3px;font-size:10px;font-weight:600;cursor:pointer;color:var(--text-muted);border:1px solid transparent;transition:all .12s}
+.search-opt:hover{background:var(--bg-hover);color:var(--text-primary)}
+.search-opt.on{background:var(--accent-glow);border-color:var(--accent);color:var(--accent)}
+.search-results{margin-top:6px;font-size:11px;overflow-y:auto}
+.sr-file{font-family:var(--font-mono);color:var(--accent);font-size:11px;padding:6px 4px 3px;font-weight:600;display:flex;align-items:center;gap:5px}
+.sr-match{padding:3px 8px;cursor:pointer;border-radius:3px;transition:background .1s;font-family:var(--font-mono);font-size:11px;color:var(--text-secondary)}
+.sr-match:hover{background:var(--bg-hover);color:var(--text-primary)}
+.sr-match mark{background:rgba(249,168,37,.35);color:var(--warn);border-radius:2px}
+.sr-count{font-size:10px;color:var(--text-muted);margin-top:4px}
+
+/* ── EDITOR AREA ── */
+#editor-area{flex:1;display:flex;flex-direction:column;overflow:hidden;min-width:0}
+#tab-bar{height:34px;background:var(--bg-surface);border-bottom:1px solid var(--border);display:flex;align-items:flex-end;padding:0 6px;gap:1px;overflow-x:auto;flex-shrink:0}
+#tab-bar::-webkit-scrollbar{height:3px}
+#tab-bar::-webkit-scrollbar-thumb{background:var(--border-bright);border-radius:2px}
+.tab{display:flex;align-items:center;gap:5px;padding:0 11px;height:29px;border-radius:5px 5px 0 0;cursor:pointer;font-family:var(--font-mono);font-size:11px;color:var(--text-muted);border:1px solid transparent;border-bottom:none;flex-shrink:0;transition:all .12s}
+.tab:hover{color:var(--text-secondary);background:var(--bg-hover)}
+.tab.active{background:var(--bg-base);color:var(--text-primary);border-color:var(--border);border-bottom-color:var(--bg-base)}
+.tab.modified .tab-dot{display:inline-block}
+.tab-dot{display:none;width:7px;height:7px;border-radius:50%;background:var(--warn)}
+.tab-close{width:14px;height:14px;display:flex;align-items:center;justify-content:center;border-radius:3px;font-size:10px;color:var(--text-muted)}
+.tab-close:hover{background:var(--bg-active);color:var(--text-primary)}
+.tab-actions{margin-left:auto;display:flex;align-items:center;gap:3px;padding-right:4px}
+.editor-toolbar{height:30px;background:var(--bg-surface);border-bottom:1px solid var(--border);display:flex;align-items:center;padding:0 10px;gap:6px;flex-shrink:0}
+.et-sep{width:1px;height:16px;background:var(--border-bright)}
+.et-label{font-size:10px;color:var(--text-muted);font-weight:600;text-transform:uppercase;letter-spacing:.6px}
+.editor-container{flex:1;display:flex;overflow:hidden;position:relative}
+#editor-wrapper{flex:1;position:relative;overflow:hidden}
+#monaco-editor{width:100%;height:100%}
+#editor-wrapper-split{flex:1;position:relative;overflow:hidden;border-left:2px solid var(--accent);display:none}
+#monaco-editor-split{width:100%;height:100%}
+.split-handle{width:4px;background:var(--accent);cursor:col-resize;opacity:.5;transition:opacity .15s;flex-shrink:0;display:none}
+.split-handle:hover{opacity:1}
+
+/* ── FIND/REPLACE BAR ── */
+#find-bar{height:0;overflow:hidden;background:var(--bg-panel);border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px;padding:0 12px;transition:height .2s;flex-shrink:0}
+#find-bar.open{height:40px}
+.find-input{background:var(--bg-active);border:1px solid var(--border-bright);border-radius:var(--radius);color:var(--text-primary);font-family:var(--font-mono);font-size:12px;padding:4px 8px;outline:none;width:180px}
+.find-input:focus{border-color:var(--accent)}
+.find-count{font-size:11px;color:var(--text-muted);font-family:var(--font-mono);min-width:60px}
+
+/* ── CONSOLE ── */
+#console-panel{height:var(--console-height);background:var(--bg-surface);border-top:1px solid var(--border);display:flex;flex-direction:column;flex-shrink:0;transition:height .2s}
+#console-panel.collapsed{height:28px}
+.console-tabs{display:flex;align-items:center;border-bottom:1px solid var(--border);padding:0 8px;flex-shrink:0;height:28px}
+.console-tab{padding:4px 12px;font-size:11px;font-weight:600;color:var(--text-muted);cursor:pointer;border-bottom:2px solid transparent;transition:all .12s;white-space:nowrap}
+.console-tab:hover{color:var(--text-secondary)}
+.console-tab.active{color:var(--accent);border-bottom-color:var(--accent)}
+.console-badge{background:var(--error);color:#fff;font-size:9px;padding:1px 4px;border-radius:8px;margin-left:4px}
+.console-actions{margin-left:auto;display:flex;gap:3px;align-items:center}
+#console-output{flex:1;overflow-y:auto;padding:6px 12px;font-family:var(--font-mono);font-size:11px;line-height:1.65}
+#console-output::-webkit-scrollbar{width:4px}
+#console-output::-webkit-scrollbar-thumb{background:var(--border-bright);border-radius:2px}
+.log-line{display:flex;gap:10px;padding:1px 0}
+.log-time{color:var(--text-muted);flex-shrink:0}
+.log-tag{color:var(--accent2);flex-shrink:0;min-width:100px}
+.log-info{color:var(--text-secondary)} .log-success{color:var(--accent)} .log-warn{color:var(--warn)} .log-error{color:var(--error)}
+
+/* ── PREVIEW PANEL ── */
+#preview-panel{display:none!important}
+.preview-header{padding:8px 10px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;flex-shrink:0}
+.preview-title{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:var(--text-muted)}
+.preview-controls{display:flex;gap:3px}
+#phone-frame-wrapper{flex:1;display:flex;align-items:center;justify-content:center;padding:12px 10px;overflow:hidden;transition:all .3s}
+.phone-frame{background:#0a0a0a;border-radius:28px;border:2px solid #333;box-shadow:0 0 0 1px #1a1a1a,0 16px 50px rgba(0,0,0,.7),inset 0 0 0 1px #222;overflow:hidden;position:relative;display:flex;flex-direction:column;transition:all .3s}
+.phone-frame.portrait{width:196px;min-height:400px}
+.phone-frame.landscape{width:360px;height:218px}
+.phone-notch-bar{height:26px;background:#0a0a0a;display:flex;align-items:center;justify-content:center;flex-shrink:0;position:relative}
+.phone-notch{width:72px;height:14px;background:#111;border-radius:0 0 10px 10px;display:flex;align-items:center;justify-content:center;gap:5px}
+.notch-cam{width:6px;height:6px;background:#1a1a1a;border-radius:50%;border:1px solid #333}
+.notch-speaker{width:24px;height:3px;background:#1a1a1a;border-radius:2px}
+.phone-status{position:absolute;right:8px;top:50%;transform:translateY(-50%);font-size:8px;color:#666;font-family:var(--font-mono);display:flex;gap:4px;align-items:center}
+.phone-screen{background:#FAFAFA;flex:1;overflow-y:auto;overflow-x:hidden;position:relative;min-height:280px;}
+.phone-home-bar{height:18px;background:#0a0a0a;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.home-pill{width:54px;height:4px;background:#333;border-radius:2px}
+.app-bar{background:#6200ea;color:white;padding:9px 10px 7px;font-size:11px;font-weight:600;font-family:'Roboto',sans-serif;display:flex;align-items:center;gap:7px;flex-shrink:0}
+.preview-content{width:100%;font-family:'Roboto',sans-serif;font-size:10px;color:#212121;box-sizing:border-box;}
+#preview-info{padding:7px 10px;border-top:1px solid var(--border);font-size:10px;color:var(--text-muted);display:flex;align-items:center;justify-content:space-between;flex-shrink:0}
+.preview-dot{width:6px;height:6px;border-radius:50%;background:var(--accent);display:inline-block;margin-right:4px}
+.device-selector{background:var(--bg-active);border:1px solid var(--border);border-radius:4px;color:var(--text-secondary);font-size:10px;padding:2px 6px;cursor:pointer;font-family:var(--font-ui)}
+.device-selector:focus{outline:none;border-color:var(--accent)}
+
+/* ── MODALS ── */
+.overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.75);z-index:1000;align-items:center;justify-content:center;backdrop-filter:blur(4px)}
+.overlay.show{display:flex}
+.modal{background:var(--bg-panel);border:1px solid var(--border-bright);border-radius:12px;box-shadow:0 30px 80px rgba(0,0,0,.5)}
+
+/* Build modal */
+.build-modal{padding:30px 38px;min-width:360px;text-align:center}
+.build-icon{font-size:34px;margin-bottom:14px;display:block}
+.build-title{font-size:17px;font-weight:700;margin-bottom:6px}
+.build-subtitle{font-size:12px;color:var(--text-secondary);margin-bottom:22px}
+.build-progress-bar{width:100%;height:4px;background:var(--bg-active);border-radius:2px;overflow:hidden;margin-bottom:10px}
+.build-progress-fill{height:100%;background:linear-gradient(90deg,var(--accent),var(--accent2));border-radius:2px;width:0%;transition:width .3s ease}
+.build-step{font-family:var(--font-mono);font-size:11px;color:var(--text-muted);min-height:16px}
+#download-section{display:none;margin-top:18px;padding-top:18px;border-top:1px solid var(--border)}
+.apk-info{background:var(--bg-active);border-radius:8px;padding:11px 14px;margin-bottom:14px;text-align:left;display:flex;align-items:center;gap:10px}
+.apk-icon{font-size:22px} .apk-details{flex:1}
+.apk-name{font-weight:600;font-size:13px;margin-bottom:2px}
+.apk-meta{font-family:var(--font-mono);font-size:10px;color:var(--text-muted)}
+.modal-actions{display:flex;gap:8px;justify-content:center}
+
+/* New Project modal */
+.np-modal{padding:26px;width:500px;max-height:90vh;overflow-y:auto}
+.np-title{font-size:16px;font-weight:700;margin-bottom:3px}
+.np-subtitle{font-size:12px;color:var(--text-secondary);margin-bottom:20px}
+.template-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:16px}
+.template-card{background:var(--bg-active);border:1px solid var(--border);border-radius:7px;padding:12px;cursor:pointer;transition:all .15s}
+.template-card:hover,.template-card.selected{border-color:var(--accent);background:var(--bg-hover)}
+.template-card.selected{background:var(--accent-glow)}
+.template-icon{font-size:18px;margin-bottom:5px}
+.template-name{font-size:12px;font-weight:600;margin-bottom:2px}
+.template-desc{font-size:10px;color:var(--text-muted)}
+.form-group{margin-bottom:12px}
+.form-label{font-size:11px;font-weight:600;color:var(--text-secondary);margin-bottom:4px;display:block}
+.form-input{width:100%;background:var(--bg-active);border:1px solid var(--border-bright);border-radius:var(--radius);color:var(--text-primary);font-family:var(--font-mono);font-size:12px;padding:7px 10px;outline:none;transition:border-color .15s}
+.form-input:focus{border-color:var(--accent)}
+.form-select{width:100%;background:var(--bg-active);border:1px solid var(--border-bright);border-radius:var(--radius);color:var(--text-primary);font-family:var(--font-ui);font-size:12px;padding:7px 10px;outline:none;cursor:pointer}
+.form-select:focus{border-color:var(--accent)}
+.form-row{display:flex;gap:10px}
+.form-row .form-group{flex:1}
+.np-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:18px;padding-top:14px;border-top:1px solid var(--border)}
+
+/* Open folder modal */
+.of-modal{padding:28px;width:540px}
+.drop-zone{border:2px dashed var(--border-bright);border-radius:10px;padding:36px 24px;text-align:center;cursor:pointer;transition:all .2s;margin-bottom:16px}
+.drop-zone:hover,.drop-zone.drag-over{border-color:var(--accent);background:var(--accent-glow)}
+.drop-zone-icon{font-size:40px;margin-bottom:12px}
+.drop-zone-title{font-size:14px;font-weight:600;margin-bottom:5px}
+.drop-zone-sub{font-size:12px;color:var(--text-secondary)}
+.drop-zone-sub span{color:var(--accent);cursor:pointer;text-decoration:underline}
+.import-options{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.import-option{background:var(--bg-active);border:1px solid var(--border);border-radius:7px;padding:12px 14px;cursor:pointer;transition:all .15s;display:flex;align-items:center;gap:10px}
+.import-option:hover{border-color:var(--accent);background:var(--bg-hover)}
+.import-option-icon{font-size:20px;flex-shrink:0}
+.import-option-text{flex:1}
+.import-option-name{font-size:12px;font-weight:600;margin-bottom:2px}
+.import-option-desc{font-size:10px;color:var(--text-muted)}
+.recent-projects{margin-top:14px}
+.recent-title{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--text-muted);margin-bottom:8px}
+.recent-item{display:flex;align-items:center;gap:8px;padding:7px 10px;border-radius:6px;cursor:pointer;transition:background .1s}
+.recent-item:hover{background:var(--bg-hover)}
+.recent-item-icon{font-size:14px}
+.recent-item-name{font-size:12px;font-weight:600;flex:1}
+.recent-item-path{font-size:10px;color:var(--text-muted);font-family:var(--font-mono)}
+.recent-item-time{font-size:10px;color:var(--text-muted)}
+
+/* Settings modal */
+.settings-modal{width:560px;max-height:80vh;display:flex;overflow:hidden}
+.settings-sidebar{width:160px;background:var(--bg-active);border-right:1px solid var(--border);padding:10px 0;flex-shrink:0}
+.settings-nav-item{padding:8px 16px;font-size:12px;cursor:pointer;color:var(--text-secondary);transition:all .1s;display:flex;align-items:center;gap:7px}
+.settings-nav-item:hover{background:var(--bg-hover);color:var(--text-primary)}
+.settings-nav-item.active{color:var(--accent);background:var(--accent-glow)}
+.settings-content{flex:1;padding:20px;overflow-y:auto}
+.settings-section{margin-bottom:24px}
+.settings-section-title{font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--text-muted);margin-bottom:12px}
+.setting-item{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px}
+.setting-label{font-size:13px;flex:1}
+.setting-desc{font-size:11px;color:var(--text-secondary);margin-top:2px}
+.setting-right{flex-shrink:0;margin-left:12px}
+.toggle{width:36px;height:20px;background:var(--border-bright);border-radius:10px;cursor:pointer;position:relative;transition:background .2s;flex-shrink:0}
+.toggle.on{background:var(--accent)}
+.toggle::after{content:'';position:absolute;width:14px;height:14px;background:#fff;border-radius:50%;top:3px;left:3px;transition:transform .2s}
+.toggle.on::after{transform:translateX(16px)}
+.setting-select{background:var(--bg-active);border:1px solid var(--border-bright);border-radius:5px;color:var(--text-primary);font-size:12px;padding:5px 8px;outline:none;cursor:pointer}
+.setting-select:focus{border-color:var(--accent)}
+
+/* ── STATUS BAR ── */
+#statusbar{height:22px;background:var(--accent);display:flex;align-items:center;padding:0 12px;gap:14px;flex-shrink:0}
+.status-item{font-size:10px;font-weight:600;color:rgba(0,0,0,.7);display:flex;align-items:center;gap:4px;cursor:pointer;padding:0 4px;border-radius:3px;transition:background .1s}
+.status-item:hover{background:rgba(0,0,0,.1)}
+.status-item.right{margin-left:auto}
+
+/* ── TOAST ── */
+.toast{position:fixed;bottom:36px;right:18px;background:var(--bg-active);border:1px solid var(--border-bright);border-radius:8px;padding:10px 16px;font-size:12px;z-index:2000;animation:slideIn .2s ease;display:flex;align-items:center;gap:8px;box-shadow:0 10px 30px rgba(0,0,0,.4);max-width:340px}
+@keyframes slideIn{from{transform:translateY(8px);opacity:0}to{transform:translateY(0);opacity:1}}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+@keyframes spin{to{transform:rotate(360deg)}}
+.spinning{animation:spin 1s linear infinite;display:inline-block}
+
+/* ── ANDROID PREVIEW CSS ── */
+.android-button{background:#6200ea;color:white;border:none;padding:6px 14px;border-radius:4px;font-size:10px;font-weight:600;letter-spacing:.5px;margin:3px 0;display:inline-block;text-transform:uppercase}
+.android-textview{display:block;padding:2px 0;font-size:11px;color:#212121;line-height:1.5}
+.android-edittext{width:100%;border:none;border-bottom:1px solid #9e9e9e;padding:4px 0;font-size:11px;margin:4px 0;outline:none;color:#212121;background:transparent}
+.android-imageview{display:flex;align-items:center;justify-content:center;background:#e0e0e0;color:#9e9e9e;font-size:9px;margin:4px 0;border-radius:4px}
+.android-linearlayout-v{display:flex;flex-direction:column;padding:4px}
+.android-linearlayout-h{display:flex;flex-direction:row;padding:4px;gap:4px;flex-wrap:wrap}
+.android-constraintlayout,.android-relativelayout{position:relative;min-height:60px;padding:4px}
+.android-framelayout{position:relative;min-height:40px;padding:4px}
+.android-scrollview{overflow-y:auto;max-height:200px}
+.android-toolbar{background:#6200ea;color:white;padding:8px 10px;font-size:11px;font-weight:600}
+.android-fab{width:28px;height:28px;border-radius:50%;background:#6200ea;color:white;display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:bold;position:absolute;bottom:8px;right:8px;box-shadow:0 3px 8px rgba(98,0,234,.4)}
+.android-checkbox{display:flex;align-items:center;gap:6px;font-size:10px;color:#212121;margin:2px 0}
+.android-radio{display:flex;align-items:center;gap:6px;font-size:10px;color:#212121;margin:2px 0}
+.android-switch{display:flex;align-items:center;gap:6px;font-size:10px;color:#212121;margin:2px 0}
+.android-card{background:#fff;border-radius:8px;box-shadow:0 1px 4px rgba(0,0,0,.2);margin:4px;padding:8px}
+
+/* ── FILE DRAG HIGHLIGHT ── */
+.tree-item.drag-target{background:var(--accent-glow);border:1px dashed var(--accent)}
+
+/* ── BREADCRUMB ── */
+#breadcrumb{height:22px;background:var(--bg-panel);border-bottom:1px solid var(--border);display:flex;align-items:center;padding:0 10px;gap:4px;font-size:11px;color:var(--text-muted);font-family:var(--font-mono);flex-shrink:0}
+.bc-sep{color:var(--border-bright)}
+.bc-item{cursor:pointer;transition:color .1s}
+.bc-item:hover{color:var(--text-primary)}
+.bc-item.last{color:var(--text-secondary)}
+
+/* ── NOTIFICATIONS ── */
+#notif-area{position:fixed;top:76px;right:14px;z-index:900;display:flex;flex-direction:column;gap:6px;pointer-events:none}
+.notif{background:var(--bg-panel);border:1px solid var(--border-bright);border-radius:8px;padding:10px 14px;font-size:12px;box-shadow:0 8px 24px rgba(0,0,0,.4);animation:slideIn .2s ease;pointer-events:all;display:flex;align-items:flex-start;gap:8px;max-width:300px}
+.notif-icon{font-size:16px;flex-shrink:0}
+.notif-body{flex:1}
+.notif-title{font-weight:600;margin-bottom:2px}
+.notif-sub{font-size:11px;color:var(--text-secondary)}
+.notif-close{color:var(--text-muted);cursor:pointer;font-size:14px;flex-shrink:0}
+.notif-close:hover{color:var(--text-primary)}
+.notif.info{border-left:3px solid var(--accent2)}
+.notif.success{border-left:3px solid var(--accent)}
+.notif.warn{border-left:3px solid var(--warn)}
+.notif.error{border-left:3px solid var(--error)}
+
+::-webkit-scrollbar{width:5px;height:5px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:var(--border-bright);border-radius:3px}
+</style>
+</head>
+<body>
+
+<!-- MENU BAR -->
+<div id="menubar" onclick="closeAllMenus(event)">
+  <div class="menu-item" onclick="toggleMenu(event,'menu-file')">File
+    <div class="dropdown" id="menu-file">
+      <div class="dd-item" onclick="showNewProject()"><span class="dd-icon">📱</span>New Project<span class="dd-kbd">Ctrl+N</span></div>
+      <div class="dd-item" onclick="showOpenFolder()"><span class="dd-icon">📂</span>Open Folder...<span class="dd-kbd">Ctrl+O</span></div>
+      <div class="dd-item" onclick="openFileFromDisk()"><span class="dd-icon">📄</span>Open File(s)...<span class="dd-kbd">Ctrl+Shift+O</span></div>
+      <div class="dd-sep"></div>
+      <div class="dd-item" onclick="saveCurrentFile()"><span class="dd-icon">💾</span>Save<span class="dd-kbd">Ctrl+S</span></div>
+      <div class="dd-item" onclick="saveAllFiles()"><span class="dd-icon">💾</span>Save All<span class="dd-kbd">Ctrl+Shift+S</span></div>
+      <div class="dd-item" onclick="saveProject()"><span class="dd-icon">📦</span>Export Project JSON</div>
+      <div class="dd-sep"></div>
+      <div class="dd-item" onclick="importProject()"><span class="dd-icon">📥</span>Import Project JSON</div>
+      <div class="dd-sep"></div>
+      <div class="dd-item" onclick="addFile()"><span class="dd-icon">➕</span>New File<span class="dd-kbd">Ctrl+Alt+N</span></div>
+    </div>
+  </div>
+  <div class="menu-item" onclick="toggleMenu(event,'menu-edit')">Edit
+    <div class="dropdown" id="menu-edit">
+      <div class="dd-item" onclick="monacoEditor&&monacoEditor.trigger('','undo')"><span class="dd-icon">↩</span>Undo<span class="dd-kbd">Ctrl+Z</span></div>
+      <div class="dd-item" onclick="monacoEditor&&monacoEditor.trigger('','redo')"><span class="dd-icon">↪</span>Redo<span class="dd-kbd">Ctrl+Y</span></div>
+      <div class="dd-sep"></div>
+      <div class="dd-item" onclick="openFindBar()"><span class="dd-icon">🔍</span>Find<span class="dd-kbd">Ctrl+F</span></div>
+      <div class="dd-item" onclick="openFindReplace()"><span class="dd-icon">🔄</span>Replace<span class="dd-kbd">Ctrl+H</span></div>
+      <div class="dd-item" onclick="switchPanel('search')"><span class="dd-icon">🔎</span>Find in Files<span class="dd-kbd">Ctrl+Shift+F</span></div>
+      <div class="dd-sep"></div>
+      <div class="dd-item" onclick="formatCode()"><span class="dd-icon">✨</span>Format Document<span class="dd-kbd">Shift+Alt+F</span></div>
+      <div class="dd-item" onclick="toggleComment()"><span class="dd-icon">//</span>Toggle Comment<span class="dd-kbd">Ctrl+/</span></div>
+    </div>
+  </div>
+  <div class="menu-item" onclick="toggleMenu(event,'menu-view')">View
+    <div class="dropdown" id="menu-view">
+      <div class="dd-item" onclick="toggleSplit()"><span class="dd-icon">⬜</span>Split Editor<span class="dd-kbd">Ctrl+\</span></div>
+      <div class="dd-item" onclick="togglePreviewPanel()"><span class="dd-icon">📱</span>Toggle Preview</div>
+      <div class="dd-item" onclick="toggleConsole()"><span class="dd-icon">🖥</span>Toggle Console<span class="dd-kbd">Ctrl+`</span></div>
+      <div class="dd-sep"></div>
+      <div class="dd-item" onclick="switchPanel('explorer')"><span class="dd-icon">📁</span>Explorer</div>
+      <div class="dd-item" onclick="switchPanel('search')"><span class="dd-icon">🔍</span>Search</div>
+      <div class="dd-item" onclick="switchPanel('git')"><span class="dd-icon">🌿</span>Source Control</div>
+      <div class="dd-item" onclick="switchPanel('structure')"><span class="dd-icon">🏗</span>File Structure</div>
+      <div class="dd-sep"></div>
+      <div class="dd-item" onclick="toggleTheme()"><span class="dd-icon">🎨</span>Toggle Theme</div>
+    </div>
+  </div>
+  <div class="menu-item" onclick="toggleMenu(event,'menu-build')">Build
+    <div class="dropdown" id="menu-build">
+      <div class="dd-item" onclick="buildAPK()"><span class="dd-icon">🔨</span>Build APK (Debug)<span class="dd-kbd">Ctrl+B</span></div>
+      <div class="dd-item" onclick="buildRelease()"><span class="dd-icon">🏆</span>Build APK (Release)</div>
+      <div class="dd-item" onclick="cleanProject()"><span class="dd-icon">🧹</span>Clean Project</div>
+      <div class="dd-sep"></div>
+      <div class="dd-item" onclick="runOnDevice()"><span class="dd-icon">▶</span>Run on Device<span class="dd-kbd">Ctrl+Enter</span></div>
+      <div class="dd-item" onclick="syncProject()"><span class="dd-icon">🔄</span>Sync Project with Gradle</div>
+    </div>
+  </div>
+  <div class="menu-item" onclick="toggleMenu(event,'menu-run')">Run
+    <div class="dropdown" id="menu-run">
+      <div class="dd-item" onclick="runOnDevice()"><span class="dd-icon">▶</span>Run App<span class="dd-kbd">Ctrl+Enter</span></div>
+      <div class="dd-item" onclick="refreshDevices()"><span class="dd-icon">📱</span>Refresh Devices</div>
+      <div class="dd-item"><span class="dd-icon">🐛</span>Debug App</div>
+      <div class="dd-item"><span class="dd-icon">📊</span>Profile App</div>
+      <div class="dd-sep"></div>
+      <div class="dd-item" onclick="switchConsoleTab('logcat')"><span class="dd-icon">📋</span>Open Logcat</div>
+    </div>
+  </div>
+  <div class="menu-item" onclick="toggleMenu(event,'menu-tools')">Tools
+    <div class="dropdown" id="menu-tools">
+      <div class="dd-item" onclick="showSettings()"><span class="dd-icon">⚙️</span>Settings<span class="dd-kbd">Ctrl+,</span></div>
+      <div class="dd-item" onclick="generateCode()"><span class="dd-icon">🤖</span>Generate Code...</div>
+      <div class="dd-item"><span class="dd-icon">📐</span>Layout Inspector</div>
+      <div class="dd-item"><span class="dd-icon">🗃</span>Database Inspector</div>
+      <div class="dd-sep"></div>
+      <div class="dd-item"><span class="dd-icon">📦</span>SDK Manager</div>
+      <div class="dd-item"><span class="dd-icon">📱</span>AVD Manager</div>
+    </div>
+  </div>
+  <div class="menu-item" onclick="toggleMenu(event,'menu-help')">Help
+    <div class="dropdown" id="menu-help">
+      <div class="dd-item"><span class="dd-icon">📖</span>Android Developer Docs</div>
+      <div class="dd-item"><span class="dd-icon">⌨</span>Keyboard Shortcuts</div>
+      <div class="dd-sep"></div>
+      <div class="dd-item"><span class="dd-icon">🤖</span>About AndroidBox</div>
+    </div>
+  </div>
+</div>
+
+<div id="error-banner">
+  <span id="error-text">Error</span>
+  <button onclick="hideError()">×</button>
+</div>
+
+<!-- TOP TOOLBAR -->
+<div id="toolbar">
+  <div class="logo">
+    <div class="logo-icon">🤖</div>
+    <div class="logo-text">Android<span>Box</span></div>
+  </div>
+  <div class="tsep"></div>
+  <button class="btn" onclick="showNewProject()" title="New Project (Ctrl+N)">📱 New</button>
+  <button class="btn" onclick="showOpenFolder()" title="Open Folder (Ctrl+O)">📂 Open</button>
+  <button class="btn" onclick="saveCurrentFile()" title="Save (Ctrl+S)">💾 Save</button>
+  <div class="tsep"></div>
+  <button class="btn" onclick="syncProject()" title="Sync with Gradle">🔄 Sync</button>
+  <button class="btn" onclick="runOnDevice()" title="Run on Device (Ctrl+Enter)">▶ Run</button>
+  <button class="btn btn-accent" onclick="buildAPK()" title="Build APK (Ctrl+B)">🔨 Build APK</button>
+  <div class="toolbar-right">
+    <div class="sync-badge synced" id="sync-badge">
+      <span class="sync-dot"></span>
+      <span id="sync-text">Synced</span>
+    </div>
+    <select id="device-select" class="device-select" title="Connected Devices"></select>
+    <button class="device-btn" onclick="refreshDevices()" title="Refresh Devices">↺</button>
+    <div class="tsep"></div>
+    <span class="project-chip" id="project-name-display" onclick="showOpenFolder()">MyFirstApp ▾</span>
+    <div class="tsep"></div>
+    <button class="btn btn-icon" onclick="toggleTheme()" title="Toggle Theme">🎨</button>
+    <button class="btn btn-icon" onclick="showSettings()" title="Settings">⚙️</button>
+  </div>
+</div>
+
+<!-- MAIN LAYOUT -->
+<div id="main" style="flex:1;display:flex;overflow:hidden">
+
+  <!-- ACTIVITY BAR -->
+  <div id="activitybar">
+    <button class="actbar-btn active" id="ab-explorer" onclick="switchPanel('explorer')" data-tip="Explorer">📁</button>
+    <button class="actbar-btn" id="ab-search" onclick="switchPanel('search')" data-tip="Search">🔍</button>
+    <button class="actbar-btn" id="ab-git" onclick="switchPanel('git')" data-tip="Source Control">🌿</button>
+    <button class="actbar-btn" id="ab-structure" onclick="switchPanel('structure')" data-tip="Structure">🏗</button>
+    <div class="actbar-sep"></div>
+    <button class="actbar-btn" onclick="addFile()" data-tip="New File">➕</button>
+    <button class="actbar-btn" onclick="openFileFromDisk()" data-tip="Open File(s)">📄</button>
+    <div class="actbar-bottom">
+      <button class="actbar-btn" onclick="showSettings()" data-tip="Settings">⚙️</button>
+    </div>
+  </div>
+
+  <!-- SIDE PANEL -->
+  <div id="side-panel">
+    <!-- EXPLORER -->
+    <div id="panel-explorer" class="panel-content" style="display:flex;flex-direction:column;height:100%">
+      <div class="sp-header">
+        <span class="sp-title" id="explorer-title">Project Explorer</span>
+        <div class="sp-actions">
+          <button class="icon-btn" onclick="addFile()" title="New File">+</button>
+          <button class="icon-btn" onclick="addFolder()" title="New Folder">📁</button>
+          <button class="icon-btn" onclick="buildFileTree()" title="Refresh">↺</button>
+          <button class="icon-btn" onclick="collapseAll()" title="Collapse All">⊟</button>
+        </div>
+      </div>
+      <div id="file-tree"></div>
+    </div>
+
+    <!-- SEARCH IN FILES -->
+    <div id="panel-search" class="panel-content" style="display:none;flex-direction:column;height:100%">
+      <div class="sp-header">
+        <span class="sp-title">Search</span>
+      </div>
+      <div id="search-panel">
+        <div class="search-input-wrap">
+          <input class="search-input" id="search-query" placeholder="Search in project..." oninput="searchInFiles()">
+        </div>
+        <div class="search-opts">
+          <span class="search-opt" id="sopt-case" onclick="toggleSearchOpt('case')">Aa</span>
+          <span class="search-opt" id="sopt-word" onclick="toggleSearchOpt('word')">W</span>
+          <span class="search-opt" id="sopt-regex" onclick="toggleSearchOpt('regex')">.*</span>
+        </div>
+        <div class="search-input-wrap" style="margin-top:6px">
+          <input class="search-input" id="replace-query" placeholder="Replace with..." style="font-size:11px">
+        </div>
+        <div style="display:flex;gap:4px;margin-top:4px">
+          <button class="btn btn-sm" onclick="replaceInFiles()">Replace All</button>
+          <button class="btn btn-sm" onclick="searchInFiles()">🔍</button>
+        </div>
+        <div class="sr-count" id="search-count"></div>
+        <div class="search-results" id="search-results"></div>
+      </div>
+    </div>
+
+    <!-- GIT PANEL -->
+    <div id="panel-git" class="panel-content" style="display:none;flex-direction:column;height:100%">
+      <div class="sp-header">
+        <span class="sp-title">Source Control</span>
+        <div class="sp-actions">
+          <button class="icon-btn" onclick="gitRefresh()" title="Refresh">↺</button>
+          <button class="icon-btn" onclick="gitPull()" title="Pull">⬇</button>
+          <button class="icon-btn" onclick="gitPush()" title="Push">⬆</button>
+        </div>
+      </div>
+      <div id="git-panel">
+        <div class="git-branch-bar">
+          <span>🌿</span>
+          <span class="git-branch-name" id="git-branch">main</span>
+          <button class="btn btn-sm" style="margin-left:auto;font-size:9px" onclick="gitCheckout()">Switch Branch</button>
+        </div>
+        <input class="git-commit-input" id="git-commit-msg" placeholder="Commit message (Ctrl+Enter to commit)">
+        <div class="git-actions">
+          <button class="btn btn-sm btn-accent" onclick="gitCommit()">✓ Commit</button>
+          <button class="btn btn-sm" onclick="gitStageAll()">+ Stage All</button>
+        </div>
+        <div class="git-section-title">Changes</div>
+        <div id="git-changes"></div>
+      </div>
+    </div>
+
+    <!-- STRUCTURE PANEL -->
+    <div id="panel-structure" class="panel-content" style="display:none;flex-direction:column;height:100%">
+      <div class="sp-header">
+        <span class="sp-title">File Structure</span>
+        <div class="sp-actions">
+          <button class="icon-btn" onclick="buildStructure()" title="Refresh">↺</button>
+        </div>
+      </div>
+      <div id="structure-panel"></div>
+    </div>
+  </div>
+
+  <!-- EDITOR AREA -->
+  <div id="editor-area">
+    <div id="tab-bar">
+      <div class="tab-actions">
+        <button class="icon-btn" onclick="toggleSplit()" title="Split Editor">⬜</button>
+      </div>
+    </div>
+    <div id="breadcrumb"></div>
+    <div id="find-bar">
+      <span style="font-size:12px;color:var(--text-secondary);flex-shrink:0">Find:</span>
+      <input class="find-input" id="find-input" placeholder="Search..." oninput="doFind()">
+      <span style="font-size:12px;color:var(--text-secondary);flex-shrink:0">Replace:</span>
+      <input class="find-input" id="replace-input" placeholder="Replace with...">
+      <button class="btn btn-sm" onclick="doReplace()">Replace</button>
+      <button class="btn btn-sm" onclick="doReplaceAll()">All</button>
+      <span class="find-count" id="find-count"></span>
+      <button class="icon-btn" onclick="closeFindBar()" style="margin-left:auto">✕</button>
+    </div>
+    <div class="editor-container">
+      <div id="editor-wrapper">
+        <div id="monaco-editor"></div>
+      </div>
+      <div class="split-handle" id="split-handle"></div>
+      <div id="editor-wrapper-split">
+        <div id="monaco-editor-split"></div>
+      </div>
+    </div>
+    <div id="console-panel">
+      <div class="console-tabs">
+        <div class="console-tab active" id="ctab-build" onclick="switchConsoleTab('build')">Build</div>
+        <div class="console-tab" id="ctab-logcat" onclick="switchConsoleTab('logcat')">Logcat</div>
+        <div class="console-tab" id="ctab-problems" onclick="switchConsoleTab('problems')">Problems <span class="console-badge" id="problems-badge" style="display:none">0</span></div>
+        <div class="console-tab" id="ctab-terminal" onclick="switchConsoleTab('terminal')">Terminal</div>
+        <div class="console-actions">
+          <button class="icon-btn" onclick="clearConsole()" title="Clear">🗑</button>
+          <button class="icon-btn" onclick="toggleConsole()" title="Toggle Panel">⊟</button>
+        </div>
+      </div>
+      <div id="console-output"></div>
+    </div>
+  </div>
+
+  <!-- PREVIEW PANEL -->
+  <div id="preview-panel">
+    <div class="preview-header">
+      <span class="preview-title">Layout Preview</span>
+      <div class="preview-controls">
+        <button class="icon-btn" onclick="rotateDevice()" title="Rotate">⟳</button>
+        <button class="icon-btn" onclick="refreshPreview()" title="Refresh Preview">↺</button>
+        <button class="icon-btn" onclick="togglePreviewPanel()" title="Hide Preview">✕</button>
+      </div>
+    </div>
+    <div style="padding:4px 8px;border-bottom:1px solid var(--border)">
+      <select class="device-selector" id="device-selector" onchange="changeDevice()" style="width:100%">
+        <option value="pixel6">Pixel 6 (1080×2340)</option>
+        <option value="pixel4">Pixel 4 (1080×2280)</option>
+        <option value="nexus5">Nexus 5 (1080×1920)</option>
+        <option value="tablet7">7" Tablet (1200×1920)</option>
+        <option value="tablet10">10" Tablet (1600×2560)</option>
+        <option value="fold">Galaxy Fold (1768×2208)</option>
+      </select>
+    </div>
+    <div id="phone-frame-wrapper">
+      <div class="phone-frame portrait" id="phone-frame">
+        <div class="phone-notch-bar">
+          <div class="phone-notch">
+            <div class="notch-cam"></div>
+            <div class="notch-speaker"></div>
+          </div>
+          <div class="phone-status">
+            <span id="phone-time">9:41</span>
+            <span>📶</span><span>🔋</span>
+          </div>
+        </div>
+        <div class="phone-screen" id="phone-screen">
+          <div class="app-bar" id="phone-app-bar" style="flex-shrink:0"><span>☰</span><span id="preview-app-title">MyFirstApp</span></div>
+          <div class="preview-content" id="preview-content"></div>
+        </div>
+        <div class="phone-home-bar"><div class="home-pill"></div></div>
+      </div>
+    </div>
+    <div id="preview-info">
+      <span><span class="preview-dot"></span>Live Preview</span>
+      <span id="preview-device-info">Pixel 6</span>
+    </div>
+  </div>
+</div>
+
+<!-- STATUS BAR -->
+<div id="statusbar">
+  <span class="status-item" onclick="switchPanel('git')">🌿 main</span>
+  <span class="status-item" id="status-lang">☕ Java</span>
+  <span class="status-item" id="status-file">MainActivity.java</span>
+  <span class="status-item" id="status-pos">Ln 1, Col 1</span>
+  <span class="status-item right">API 33</span>
+  <span class="status-item">Gradle 8.0</span>
+  <span class="status-item">UTF-8</span>
+  <span class="status-item" id="status-errors" style="display:none">⚠ <span id="error-count">0</span></span>
+</div>
+
+<!-- NOTIFICATIONS AREA -->
+<div id="notif-area"></div>
+
+<!-- HIDDEN INPUTS -->
+<input type="file" id="file-input" multiple accept=".java,.kt,.xml,.gradle,.json,.md,.txt,.properties" style="display:none" onchange="loadFiles(event)">
+<input type="file" id="folder-input" webkitdirectory multiple style="display:none" onchange="loadFolder(event)">
+<input type="file" id="project-json-input" accept=".json" style="display:none" onchange="importProjectFile(event)">
+
+<!-- BUILD MODAL -->
+<div class="overlay" id="build-overlay">
+  <div class="modal build-modal">
+    <span class="build-icon" id="build-icon">🔨</span>
+    <div class="build-title" id="build-title">Building APK...</div>
+    <div class="build-subtitle" id="build-subtitle">Running Gradle assembleDebug</div>
+    <div class="build-progress-bar"><div class="build-progress-fill" id="build-progress-fill"></div></div>
+    <div class="build-step" id="build-step">Initializing...</div>
+    <div id="download-section">
+      <div class="apk-info">
+        <span class="apk-icon">📦</span>
+        <div class="apk-details">
+          <div class="apk-name" id="apk-name">app-debug.apk</div>
+          <div class="apk-meta" id="apk-meta">2.4 MB · debug</div>
+        </div>
+      </div>
+      <div class="modal-actions">
+        <button class="btn btn-accent" onclick="downloadAPK()">⬇ Download APK</button>
+        <button class="btn" onclick="closeBuildModal()">Close</button>
+      </div>
+    </div>
+    <div id="build-actions-initial" style="margin-top:14px">
+      <button class="btn" onclick="closeBuildModal()">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<!-- NEW PROJECT MODAL -->
+<div class="overlay" id="new-project-overlay">
+  <div class="modal np-modal">
+    <div class="np-title">🤖 Create New Project</div>
+    <div class="np-subtitle">Choose a template and configure your Android project</div>
+    <div class="template-grid" id="template-grid">
+      <div class="template-card selected" data-template="empty" onclick="selectTemplate(this)">
+        <div class="template-icon">📱</div><div class="template-name">Empty Activity</div><div class="template-desc">Basic single-screen app</div>
+      </div>
+      <div class="template-card" data-template="login" onclick="selectTemplate(this)">
+        <div class="template-icon">🔐</div><div class="template-name">Login Screen</div><div class="template-desc">User authentication UI</div>
+      </div>
+      <div class="template-card" data-template="list" onclick="selectTemplate(this)">
+        <div class="template-icon">📋</div><div class="template-name">List View</div><div class="template-desc">Scrollable list layout</div>
+      </div>
+      <div class="template-card" data-template="calculator" onclick="selectTemplate(this)">
+        <div class="template-icon">🔢</div><div class="template-name">Calculator</div><div class="template-desc">Math calculator app</div>
+      </div>
+      <div class="template-card" data-template="tabs" onclick="selectTemplate(this)">
+        <div class="template-icon">📑</div><div class="template-name">Tabs + Fragments</div><div class="template-desc">Multi-tab navigation</div>
+      </div>
+      <div class="template-card" data-template="maps" onclick="selectTemplate(this)">
+        <div class="template-icon">🗺</div><div class="template-name">Maps Activity</div><div class="template-desc">Google Maps integration</div>
+      </div>
+    </div>
+    <div class="form-row">
+      <div class="form-group"><label class="form-label">App Name</label><input class="form-input" id="np-app-name" value="MyAndroidApp"></div>
+      <div class="form-group"><label class="form-label">Package Name</label><input class="form-input" id="np-package" value="com.example.myapp"></div>
+    </div>
+    <div class="form-row">
+      <div class="form-group"><label class="form-label">Save Location</label><input class="form-input" id="np-location" value="~/AndroidStudioProjects" placeholder="Project location"></div>
+    </div>
+    <div class="form-row">
+      <div class="form-group">
+        <label class="form-label">Language</label>
+        <select class="form-select" id="np-language"><option value="java">Java</option><option value="kotlin">Kotlin</option></select>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Min SDK</label>
+        <select class="form-select" id="np-minsdk">
+          <option value="21">API 21 (Android 5.0)</option>
+          <option value="24">API 24 (Android 7.0)</option>
+          <option value="26">API 26 (Android 8.0)</option>
+          <option value="29" selected>API 29 (Android 10)</option>
+          <option value="33">API 33 (Android 13)</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Build System</label>
+        <select class="form-select" id="np-build"><option value="gradle">Gradle (Groovy)</option><option value="gradle-kts">Gradle (Kotlin DSL)</option></select>
+      </div>
+    </div>
+    <div class="np-actions">
+      <button class="btn" onclick="closeNewProject()">Cancel</button>
+      <button class="btn btn-accent" onclick="createProject()">Create Project →</button>
+    </div>
+  </div>
+</div>
+
+<!-- OPEN FOLDER MODAL -->
+<div class="overlay" id="open-folder-overlay">
+  <div class="modal of-modal">
+    <div class="np-title">📂 Open Project</div>
+    <div class="np-subtitle">Open an existing Android project from your file system</div>
+    <div class="drop-zone" id="drop-zone" ondragover="handleDragOver(event)" ondragleave="handleDragLeave(event)" ondrop="handleDrop(event)" onclick="triggerFolderPicker()">
+      <div class="drop-zone-icon">📂</div>
+      <div class="drop-zone-title">Drop project folder here</div>
+      <div class="drop-zone-sub">or <span onclick="triggerFolderPicker()">browse for folder</span> · supports any Android Studio project</div>
+    </div>
+    <div class="import-options">
+      <div class="import-option" onclick="triggerFolderPicker()">
+        <span class="import-option-icon">📁</span>
+        <div class="import-option-text"><div class="import-option-name">Open Folder</div><div class="import-option-desc">Select project directory</div></div>
+      </div>
+      <div class="import-option" onclick="openFileFromDiskModal()">
+        <span class="import-option-icon">📄</span>
+        <div class="import-option-text"><div class="import-option-name">Open Files</div><div class="import-option-desc">Load individual source files</div></div>
+      </div>
+      <div class="import-option" onclick="importProject()">
+        <span class="import-option-icon">📦</span>
+        <div class="import-option-text"><div class="import-option-name">Import JSON</div><div class="import-option-desc">AndroidBox project export</div></div>
+      </div>
+      <div class="import-option" onclick="cloneRepo()">
+        <span class="import-option-icon">🌿</span>
+        <div class="import-option-text"><div class="import-option-name">Clone Repository</div><div class="import-option-desc">From Git URL</div></div>
+      </div>
+    </div>
+    <div class="recent-projects" id="recent-projects-list"></div>
+    <div class="np-actions">
+      <button class="btn" onclick="closeOpenFolder()">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<!-- SETTINGS MODAL -->
+<div class="overlay" id="settings-overlay">
+  <div class="modal settings-modal">
+    <div class="settings-sidebar">
+      <div style="padding:12px 16px 8px;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--text-muted)">Settings</div>
+      <div class="settings-nav-item active" onclick="switchSettingsTab('editor')">📝 Editor</div>
+      <div class="settings-nav-item" onclick="switchSettingsTab('theme')">🎨 Appearance</div>
+      <div class="settings-nav-item" onclick="switchSettingsTab('build')">🔨 Build</div>
+      <div class="settings-nav-item" onclick="switchSettingsTab('sync')">🔄 Sync</div>
+      <div class="settings-nav-item" onclick="switchSettingsTab('keybindings')">⌨ Keybindings</div>
+    </div>
+    <div class="settings-content" id="settings-content">
+      <!-- rendered by JS -->
+    </div>
+  </div>
+</div>
+
+<!-- CONTEXT MENU -->
+<div id="ctx-menu" class="tree-ctx-menu" style="display:none"></div>
+
+<script>
+// ═══════════════════════════
+//  STATE
+// ═══════════════════════════
+let monacoEditor = null, monacoSplit = null;
+let activeFile = null, splitFile = null;
+let selectedTemplate = 'empty';
+let currentConsoleTab = 'build';
+let splitOpen = false, phonePortrait = true;
+let autoSaveTimer = null;
+let foldedFolders = new Set();
+let searchOpts = {case: false, word: false, regex: false};
+let recentProjects = JSON.parse(localStorage.getItem('ab_recent') || '[]');
+let settings = JSON.parse(localStorage.getItem('ab_settings') || '{}');
+settings = Object.assign({fontSize:13, autoSave:true, autoSaveDelay:2000, autoFormat:false, minimap:true, wordWrap:false, theme:'dark', tabSize:4, syncGradle:true}, settings);
+
+const openTabs = [];
+const project = {
+  name:'MyFirstApp', package:'com.example.myfirstapp',
+  language:'java', minSdk:29, files:{},
+  gitFiles:[], branch:'main', lastSaved: Date.now()
+};
+
+const API_BASE = localStorage.getItem('androidbox_api') || `${window.location.origin}/api/android-lab`;
+let backendAvailable = false;
+let lastBuildArtifactPath = '';
+const EXCLUDED_PATH_SEGMENTS = new Set([
+  '.gradle',
+  '.idea',
+  'build',
+  'captures',
+  '.kotlin',
+  '.git',
+  'externalNativeBuild',
+  '.cxx',
+]);
+const IMPORTANT_ROOT_FILES = new Set([
+  'settings.gradle',
+  'settings.gradle.kts',
+  'build.gradle',
+  'build.gradle.kts',
+  'gradle.properties',
+  'local.properties',
+  'gradlew',
+  'gradlew.bat',
+  '.gitignore',
+  'README.md',
+]);
+const BINARY_EXTS = new Set([
+  'png','jpg','jpeg','webp','gif','bmp','ico','ttf','otf','woff','woff2','jar','aar','jks','keystore'
+]);
+
+function getPathExt(filepath) {
+  return String(filepath || '').split('.').pop().toLowerCase();
+}
+
+function isBinaryProjectEntry(path, value = project.files?.[path]) {
+  if (value && typeof value === 'object' && value.encoding === 'base64') {
+    return true;
+  }
+
+  return BINARY_EXTS.has(getPathExt(path));
+}
+
+function getProjectFileText(path) {
+  const value = project.files?.[path];
+  if (typeof value === 'string') {
+    return value;
+  }
+
+  if (isBinaryProjectEntry(path, value)) {
+    return `// Binary resource preview is not editable in Android Box\n// Path: ${path}\n// This file is preserved for sync/build/run.`;
+  }
+
+  return value == null ? '' : String(value);
+}
+
+async function detectBackend() {
+  try {
+    const ctrl = new AbortController();
+    const t = setTimeout(()=>ctrl.abort(), 800);
+    const res = await fetch(API_BASE + '/api/status', {signal: ctrl.signal});
+    clearTimeout(t);
+    if (!res.ok) return backendAvailable = false;
+    backendAvailable = true;
+  } catch (e) {
+    backendAvailable = false;
+  }
+}
+
+function snapshotProjectForBackend() {
+  if (activeFile && monacoEditor && !isBinaryProjectEntry(activeFile)) {
+    project.files[activeFile] = monacoEditor.getValue();
+  }
+  if (splitFile && monacoSplit && !isBinaryProjectEntry(splitFile)) {
+    project.files[splitFile] = monacoSplit.getValue();
+  }
+
+  const filteredFiles = Object.fromEntries(
+    Object.entries(project.files).filter(([filepath]) => shouldKeepProjectPath(filepath))
+  );
+
+  return {
+    name: project.name,
+    package: project.package,
+    language: project.language,
+    minSdk: project.minSdk,
+    branch: project.branch,
+    files: filteredFiles,
+  };
+}
+
+function shouldKeepProjectPath(filepath) {
+  const normalized = String(filepath || '').replace(/\\/g, '/').replace(/^\/+/, '');
+  if (!normalized) return false;
+
+  const segments = normalized.split('/');
+  if (segments.some(segment => EXCLUDED_PATH_SEGMENTS.has(segment))) {
+    return false;
+  }
+
+  if (normalized.startsWith('.')) {
+    return false;
+  }
+
+  if (IMPORTANT_ROOT_FILES.has(normalized)) {
+    return true;
+  }
+
+  if (normalized.startsWith('app/')) {
+    return true;
+  }
+
+  if (normalized.startsWith('gradle/')) {
+    return true;
+  }
+
+  return false;
+}
+
+function applyProjectPayload(payload) {
+  if (!payload) return;
+  if (payload.project) Object.assign(project, payload.project);
+  if (payload.files && typeof payload.files === 'object') {
+    project.files = { ...payload.files };
+  }
+  project.modifiedFiles = new Set();
+  document.getElementById('project-name-display').textContent = (project.name || 'Project') + ' ▾';
+  openTabs.length = 0;
+  activeFile = null;
+  splitFile = null;
+  buildFileTree();
+  clearConsole();
+  const firstSrc = Object.keys(project.files).find(f => f.endsWith('.java') || f.endsWith('.kt'));
+  const firstXml = Object.keys(project.files).find(f => f.includes('layout') && f.endsWith('.xml'));
+  if (firstSrc) openFile(firstSrc);
+  setTimeout(() => {
+    if (firstXml) openFile(firstXml);
+    if (firstSrc) openFile(firstSrc);
+    refreshPreview();
+    updateSyncBadge('synced');
+  }, 300);
+}
+
+async function loadBackendProject() {
+  await detectBackend();
+  if (!backendAvailable) return false;
+  const res = await fetch(API_BASE + '/api/project');
+  if (!res.ok) throw new Error('Unable to load backend project');
+  const payload = await res.json();
+  applyProjectPayload(payload);
+  addToRecent(project.name || 'DefaultApp');
+  logToConsole(`Loaded backend project "${project.name}"`, 'success');
+  return true;
+}
+
+async function syncProjectToBackend(options = {}) {
+  const { silent = false } = options;
+  await detectBackend();
+  if (!backendAvailable) {
+    if (!silent) showError('Backend not running. Start BrainBox backend first.');
+    return false;
+  }
+
+  updateSyncBadge('syncing');
+  const res = await fetch(API_BASE + '/api/project/sync', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(snapshotProjectForBackend()),
+  });
+
+  if (!res.ok) {
+    let message = 'Project sync failed';
+    try {
+      const data = await res.json();
+      message = data.error || message;
+    } catch {}
+    updateSyncBadge('unsaved');
+    throw new Error(message);
+  }
+
+  await res.json();
+  project.modifiedFiles.clear();
+  project.lastSaved = Date.now();
+  renderTabs();
+  updateSyncBadge('synced');
+  document.title = `AndroidBox — ${project.name}`;
+  if (!silent) {
+    logToConsole('Project synced to backend.', 'success');
+  }
+  return true;
+}
+
+// ═══════════════════════════
+//  MENU
+// ═══════════════════════════
+function toggleMenu(e, id) {
+  e.stopPropagation();
+  const isOpen = document.getElementById(id).parentElement.classList.contains('active');
+  document.querySelectorAll('.menu-item').forEach(m=>m.classList.remove('active'));
+  if (!isOpen) document.getElementById(id).parentElement.classList.add('active');
+}
+function closeAllMenus(e) {
+  if (!e.target.closest('.menu-item')) {
+    document.querySelectorAll('.menu-item').forEach(m=>m.classList.remove('active'));
+  }
+}
+document.addEventListener('click', ()=>document.querySelectorAll('.menu-item').forEach(m=>m.classList.remove('active')));
+
+// ═══════════════════════════
+//  ACTIVITY BAR / PANELS
+// ═══════════════════════════
+let currentPanel = 'explorer';
+function switchPanel(name) {
+  closeAllMenus({target:document.body});
+  document.querySelectorAll('[id^="ab-"]').forEach(b=>b.classList.remove('active'));
+  document.querySelectorAll('.panel-content').forEach(p=>{p.style.display='none'});
+  const ab = document.getElementById('ab-'+name);
+  if (ab) { ab.classList.add('active'); }
+  const panel = document.getElementById('panel-'+name);
+  if (panel) { panel.style.display='flex'; }
+  if (name === 'git') buildGitPanel();
+  if (name === 'structure') buildStructure();
+  currentPanel = name;
+}
+
+// ═══════════════════════════
+//  FILE TREE
+// ═══════════════════════════
+function buildFileTree() {
+  const tree = document.getElementById('file-tree');
+  const files = Object.keys(project.files);
+  tree.innerHTML = '';
+  const structure = {};
+  files.forEach(path => {
+    const parts = path.split('/');
+    let cur = structure;
+    parts.forEach((p,i) => {
+      if (i===parts.length-1) cur[p]={__file:true,__path:path};
+      else { cur[p]=cur[p]||{}; cur=cur[p]; }
+    });
+  });
+  function renderNode(node, name, depth, parentPath) {
+    const fullPath = parentPath ? `${parentPath}/${name}` : name;
+    if (node.__file) {
+      const ext = name.split('.').pop();
+      let icon='📄', badge='';
+      if(ext==='java'){icon='☕';badge=`<span class="file-badge badge-java">Java</span>`}
+      else if(ext==='kt'){icon='🟣';badge=`<span class="file-badge badge-kt">Kotlin</span>`}
+      else if(ext==='xml'){icon='📐';badge=`<span class="file-badge badge-xml">XML</span>`}
+      else if(ext==='gradle'||name.endsWith('.gradle.kts')){icon='🐘';badge=`<span class="file-badge badge-gradle">Gradle</span>`}
+      else if(ext==='json'){icon='📋';badge=`<span class="file-badge badge-json">JSON</span>`}
+      const isModified = project.modifiedFiles && project.modifiedFiles.has(node.__path);
+      const el = document.createElement('div');
+      el.className=`tree-item ti${Math.min(depth,4)} ${activeFile===node.__path?'active':''}`;
+      el.innerHTML=`<span class="item-icon">${icon}</span><span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${name}${isModified?'<span style="color:var(--warn);margin-left:3px">●</span>':''}</span>${badge}`;
+      el.onclick=()=>openFile(node.__path);
+      el.oncontextmenu=(e)=>{e.preventDefault();showCtxMenu(e,node.__path,false)};
+      tree.appendChild(el);
+    } else {
+      const folderIcons = {app:'📱',java:'☕',res:'🎨',layout:'📐',values:'📝',drawable:'🖼',mipmap:'🔵',raw:'📦'};
+      const fIcon = folderIcons[name]||'📂';
+      const isOpen = !foldedFolders.has(fullPath);
+      const el = document.createElement('div');
+      el.className=`tree-item tree-folder ti${Math.min(depth,4)}`;
+      el.innerHTML=`<span class="tree-folder-arrow ${isOpen?'open':''}">▶</span><span class="item-icon">${fIcon}</span><span style="flex:1">${name}/</span>`;
+      el.onclick=()=>{
+        if(foldedFolders.has(fullPath)) foldedFolders.delete(fullPath);
+        else foldedFolders.add(fullPath);
+        buildFileTree();
+      };
+      el.oncontextmenu=(e)=>{e.preventDefault();showCtxMenu(e,fullPath,true)};
+      tree.appendChild(el);
+      if (isOpen) {
+        Object.keys(node).filter(k=>!k.startsWith('__')).sort((a,b)=>{
+          const aIsFile=node[a].__file; const bIsFile=node[b].__file;
+          if(aIsFile&&!bIsFile)return 1; if(!aIsFile&&bIsFile)return -1;
+          return a.localeCompare(b);
+        }).forEach(childName=>renderNode(node[childName],childName,depth+1,fullPath));
+      }
+    }
+  }
+  Object.keys(structure).sort((a,b)=>{
+    const aF=structure[a].__file; const bF=structure[b].__file;
+    if(aF&&!bF)return 1; if(!aF&&bF)return -1; return a.localeCompare(b);
+  }).forEach(k=>renderNode(structure[k],k,0,''));
+}
+function collapseAll() { foldedFolders = new Set(Object.keys(project.files).map(f=>f.split('/').slice(0,-1).join('/')).filter(Boolean)); buildFileTree(); }
+
+// Context menu
+function showCtxMenu(e, path, isFolder) {
+  document.getElementById('ctx-menu').remove && null;
+  const menu = document.getElementById('ctx-menu');
+  menu.innerHTML = '';
+  if (!isFolder) {
+    addCtxItem(menu,'📄 Open',()=>openFile(path));
+    addCtxItem(menu,'📄 Open in Split Editor',()=>{openFile(path);openInSplit(path)});
+    addCtxSep(menu);
+    addCtxItem(menu,'✏️ Rename',()=>renameFile(path));
+    addCtxItem(menu,'📋 Copy Path',()=>{navigator.clipboard.writeText(path);showToast('Path copied!')});
+    addCtxItem(menu,'📑 Duplicate',()=>duplicateFile(path));
+    addCtxSep(menu);
+    addCtxItem(menu,'🗑 Delete',()=>deleteFile(path),'danger');
+  } else {
+    addCtxItem(menu,'📄 New File',()=>addFileInFolder(path));
+    addCtxItem(menu,'📁 New Folder',()=>addFolderIn(path));
+    addCtxSep(menu);
+    addCtxItem(menu,'✏️ Rename',()=>renameFolder(path));
+    addCtxItem(menu,'🗑 Delete Folder',()=>deleteFolder(path),'danger');
+  }
+  menu.style.display='block';
+  menu.style.left=Math.min(e.clientX, window.innerWidth-180)+'px';
+  menu.style.top=Math.min(e.clientY, window.innerHeight-200)+'px';
+}
+function addCtxItem(menu,label,fn,cls='') {
+  const el=document.createElement('div');
+  el.className='ctx-item '+(cls||'');
+  el.textContent=label;
+  el.onclick=()=>{menu.style.display='none';fn()};
+  menu.appendChild(el);
+}
+function addCtxSep(menu){const s=document.createElement('div');s.className='ctx-sep';menu.appendChild(s)}
+document.addEventListener('click',()=>document.getElementById('ctx-menu').style.display='none');
+document.addEventListener('contextmenu',()=>{}); // prevent default on tree items above
+
+// File ops
+function renameFile(path) {
+  const newName = prompt('Rename file:', path.split('/').pop());
+  if (!newName||newName===path.split('/').pop()) return;
+  const newPath = path.split('/').slice(0,-1).concat(newName).join('/');
+  project.files[newPath] = project.files[path];
+  delete project.files[path];
+  if (activeFile===path) { activeFile=newPath; updateEditorContent(); }
+  const ti = openTabs.indexOf(path);
+  if (ti>-1) openTabs[ti]=newPath;
+  buildFileTree(); renderTabs();
+  showToast(`Renamed to ${newName}`);
+}
+function duplicateFile(path) {
+  const name=path.split('/').pop(); const ext=name.includes('.')?'.'+name.split('.').pop():'';
+  const base=name.replace(ext,''); const newPath=path.replace(name,base+'_copy'+ext);
+  project.files[newPath]=project.files[path];
+  buildFileTree(); showToast('File duplicated');
+}
+function deleteFile(path) {
+  if (!confirm(`Delete ${path.split('/').pop()}?`)) return;
+  delete project.files[path];
+  if (activeFile===path) { const i=openTabs.indexOf(path); openTabs.splice(i,1); activeFile=openTabs[Math.max(0,i-1)]||null; updateEditorContent(); }
+  else { const i=openTabs.indexOf(path); if(i>-1) openTabs.splice(i,1); }
+  buildFileTree(); renderTabs(); showToast('File deleted');
+}
+function renameFolder(path) { const n=prompt('Rename folder:',path.split('/').pop()); if(!n)return; showToast('Folder renamed (simulation)'); buildFileTree(); }
+function deleteFolder(path) {
+  if (!confirm(`Delete folder ${path}?`)) return;
+  Object.keys(project.files).filter(f=>f.startsWith(path+'/')).forEach(f=>delete project.files[f]);
+  buildFileTree(); showToast('Folder deleted');
+}
+function addFileInFolder(folderPath) {
+  const n=prompt('New file name:','NewFile.java'); if(!n)return;
+  const path=folderPath+'/'+n; project.files[path]=''; openFile(path); buildFileTree();
+}
+function addFolderIn(parent) { const n=prompt('Folder name:'); if(!n)return; const path=parent+'/'+n+'/.gitkeep'; project.files[path]=''; buildFileTree(); }
+
+// ═══════════════════════════
+//  OPEN FOLDER FROM DISK
+// ═══════════════════════════
+function showOpenFolder() {
+  document.getElementById('open-folder-overlay').classList.add('show');
+  renderRecentProjects();
+  closeAllMenus({target:document.body});
+}
+function closeOpenFolder() {
+  document.getElementById('open-folder-overlay').classList.remove('show');
+}
+function triggerFolderPicker() {
+  const inp = document.getElementById('folder-input');
+  inp.value = '';           // reset so same folder can be re-selected
+  inp.click();
+}
+function openFileFromDisk() {
+  const inp = document.getElementById('file-input');
+  inp.value = '';
+  inp.click();
+  closeAllMenus({target:document.body});
+}
+function openFileFromDiskModal() {
+  closeOpenFolder();
+  const inp = document.getElementById('file-input');
+  inp.value = '';
+  inp.click();
+}
+
+// ── Drag & Drop ──
+function handleDragOver(e) {
+  e.preventDefault();
+  e.stopPropagation();
+  document.getElementById('drop-zone').classList.add('drag-over');
+}
+function handleDragLeave(e) {
+  document.getElementById('drop-zone').classList.remove('drag-over');
+}
+function handleDrop(e) {
+  e.preventDefault();
+  e.stopPropagation();
+  document.getElementById('drop-zone').classList.remove('drag-over');
+
+  const items = Array.from(e.dataTransfer.items || []);
+  const fileList = e.dataTransfer.files;
+
+  // Try FileSystem API first (supports folders)
+  if (items.length && items[0].webkitGetAsEntry) {
+    const collected = {};
+    let totalPending = 0;
+    let settled = false;
+
+    function checkDone() {
+      if (totalPending === 0 && !settled) {
+        settled = true;
+        if (Object.keys(collected).length > 0) finalizeImport(collected);
+        else showToast('⚠ No readable files found in drop');
+      }
+    }
+
+    function readFileEntry(entry, pathPrefix) {
+      totalPending++;
+      entry.file(file => {
+        readFileObject(file, pathPrefix + '/' + file.name, collected, () => {
+          totalPending--;
+          checkDone();
+        });
+      }, () => { totalPending--; checkDone(); });
+    }
+
+    function readDirEntry(entry, pathPrefix) {
+      const dirPath = pathPrefix + '/' + entry.name;
+      const reader = entry.createReader();
+      totalPending++;
+
+      function readBatch() {
+        reader.readEntries(entries => {
+          if (!entries.length) { totalPending--; checkDone(); return; }
+          entries.forEach(child => {
+            if (child.isFile) readFileEntry(child, dirPath);
+            else if (child.isDirectory) readDirEntry(child, dirPath);
+          });
+          readBatch(); // readEntries only returns up to 100 items at a time
+        }, () => { totalPending--; checkDone(); });
+      }
+      readBatch();
+    }
+
+    items.forEach(item => {
+      const entry = item.webkitGetAsEntry();
+      if (!entry) return;
+      if (entry.isFile) readFileEntry(entry, '');
+      else if (entry.isDirectory) readDirEntry(entry, '');
+    });
+
+    if (totalPending === 0) showToast('⚠ Nothing readable was dropped');
+
+  } else if (fileList && fileList.length) {
+    // Fallback: plain file list
+    processFileList(Array.from(fileList), null);
+  }
+}
+
+// ── Folder picker (webkitdirectory) ──
+function loadFolder(event) {
+  const files = Array.from(event.target.files || []);
+  event.target.value = '';   // reset immediately so re-pick works
+  if (!files.length) return;
+
+  showToast('📂 Reading folder...');
+
+  const projectRoot = (files[0].webkitRelativePath || '').split('/')[0] || 'Project';
+  processFileList(files, projectRoot);
+}
+
+// ── Individual file picker ──
+function loadFiles(event) {
+  const files = Array.from(event.target.files || []);
+  event.target.value = '';
+  if (!files.length) return;
+
+  showToast(`📄 Loading ${files.length} file(s)...`);
+  processFileList(files, null);
+}
+
+// ── Core: process an array of File objects ──
+const READABLE_EXTS = new Set(['java','kt','xml','gradle','kts','json','md','txt','properties','pro','gitignore','toml','yaml','yml']);
+
+function processFileList(files, projectRoot) {
+  const collected = {};
+  let pending = files.length;
+  if (!pending) { showToast('⚠ No files selected'); return; }
+
+  files.forEach(file => {
+    // Determine the key path
+    let relPath;
+    if (file.webkitRelativePath && projectRoot) {
+      // Strip the top-level folder name so paths start from app/ etc.
+      relPath = file.webkitRelativePath.replace(projectRoot + '/', '');
+    } else {
+      // Flat file — place it intelligently
+      const ext = getPathExt(file.name);
+      const pkgPath = project.package.replace(/\./g, '/');
+      if (['java','kt'].includes(ext))           relPath = `app/java/${pkgPath}/${file.name}`;
+      else if (ext === 'xml' && file.name !== 'AndroidManifest.xml') relPath = `app/res/layout/${file.name}`;
+      else if (file.name === 'AndroidManifest.xml') relPath = `app/AndroidManifest.xml`;
+      else if (['gradle','kts'].includes(ext))   relPath = file.name;
+      else                                        relPath = `app/${file.name}`;
+    }
+
+    if (!shouldKeepProjectPath(relPath)) {
+      pending--;
+      if (pending === 0) finalizeImport(collected, projectRoot);
+      return;
+    }
+
+    const ext = getPathExt(file.name);
+    if (!READABLE_EXTS.has(ext) && !BINARY_EXTS.has(ext)) {
+      pending--;
+      if (pending === 0) finalizeImport(collected, projectRoot);
+      return;
+    }
+
+    readFileObject(file, relPath, collected, () => {
+      pending--;
+      if (pending === 0) finalizeImport(collected, projectRoot);
+    });
+  });
+}
+
+// ── Read a single File object into a collector map ──
+function readFileObject(file, path, collector, done) {
+  const reader = new FileReader();
+  const ext = getPathExt(path);
+  reader.onload = e => {
+    if (BINARY_EXTS.has(ext)) {
+      const bytes = new Uint8Array(e.target.result);
+      let binary = '';
+      bytes.forEach(byte => { binary += String.fromCharCode(byte); });
+      collector[path] = {
+        encoding: 'base64',
+        content: btoa(binary),
+      };
+    } else {
+      collector[path] = e.target.result || '';
+    }
+    done();
+  };
+  reader.onerror = ()  => { collector[path] = ''; done(); };
+  try {
+    if (BINARY_EXTS.has(ext)) {
+      reader.readAsArrayBuffer(file);
+    } else {
+      reader.readAsText(file);
+    }
+  } catch(e) {
+    done();
+  }
+}
+
+// ── Finalize: load collected files into the project ──
+function finalizeImport(newFiles, rootName) {
+  const filteredFiles = Object.fromEntries(
+    Object.entries(newFiles).filter(([filepath]) => shouldKeepProjectPath(filepath))
+  );
+  const keys = Object.keys(filteredFiles);
+  if (!keys.length) { showToast('⚠ No readable files found'); return; }
+
+  // Detect app name from root folder or manifest
+  let appName = (rootName || '').replace(/[^a-zA-Z0-9_]/g, '') || 'ImportedProject';
+
+  // Auto-detect package from AndroidManifest.xml
+  let detectedPkg = project.package;
+  const manifestKey = keys.find(k => k.includes('AndroidManifest'));
+  if (manifestKey) {
+    const m = filteredFiles[manifestKey].match(/package\s*=\s*"([^"]+)"/);
+    if (m) detectedPkg = m[1];
+  }
+
+  // Auto-detect app name from strings.xml
+  const stringsKey = keys.find(k => k.includes('strings.xml'));
+  if (stringsKey) {
+    const m = filteredFiles[stringsKey].match(/<string name="app_name">([^<]+)<\/string>/);
+    if (m) appName = m[1].replace(/[^a-zA-Z0-9_]/g,'') || appName;
+  }
+
+  project.name    = appName;
+  project.package = detectedPkg;
+  project.files   = { ...filteredFiles };
+  project.modifiedFiles = new Set();
+
+  document.getElementById('project-name-display').textContent = project.name + ' ▾';
+  openTabs.length = 0;
+  activeFile = null;
+
+  buildFileTree();
+  clearConsole();
+
+  // Open sensible default files
+  const firstSrc = keys.find(f => f.endsWith('.java') || f.endsWith('.kt'));
+  const firstXml = keys.find(f => f.includes('layout') && f.endsWith('.xml'));
+
+  if (firstSrc) openFile(firstSrc);
+  setTimeout(() => {
+    if (firstXml) openFile(firstXml);
+    if (firstSrc) openFile(firstSrc);
+    refreshPreview();
+  }, 300);
+
+  addToRecent(project.name);
+  updateSyncBadge('synced');
+
+  logToConsole(`Project "${project.name}" imported — ${keys.length} files`, 'success');
+  logToConsole(`Package: ${project.package}`, 'info');
+  showNotif('success', 'Project Loaded', `${keys.length} files · ${project.package}`);
+  closeOpenFolder();
+}
+
+// Recent projects
+function addToRecent(name) {
+  recentProjects = recentProjects.filter(r=>r.name!==name);
+  recentProjects.unshift({name, time: Date.now()});
+  if (recentProjects.length>8) recentProjects.pop();
+  try { localStorage.setItem('ab_recent', JSON.stringify(recentProjects)); } catch(e){}
+}
+
+function renderRecentProjects() {
+  const el = document.getElementById('recent-projects-list');
+  if (!recentProjects.length) { el.innerHTML=''; return; }
+  el.innerHTML=`<div class="recent-title">Recent Projects</div>`+
+    recentProjects.map(r=>`
+      <div class="recent-item" onclick="loadRecentProject('${r.name}')">
+        <span class="recent-item-icon">📱</span>
+        <span class="recent-item-name">${r.name}</span>
+        <span class="recent-item-time">${timeAgo(r.time)}</span>
+      </div>`).join('');
+}
+
+function timeAgo(t) {
+  const d=(Date.now()-t)/1000;
+  if(d<60)return 'just now';
+  if(d<3600)return `${Math.floor(d/60)}m ago`;
+  if(d<86400)return `${Math.floor(d/3600)}h ago`;
+  return `${Math.floor(d/86400)}d ago`;
+}
+
+function loadRecentProject(name) {
+  showToast(`📂 Loading "${name}"...`);
+  loadBackendProject()
+    .then(() => closeOpenFolder())
+    .catch(err => showError('Load failed: ' + (err.message || 'unknown error')));
+}
+
+function cloneRepo() {
+  const url = prompt('Enter Git repository URL:','https://github.com/user/my-android-app.git');
+  if (!url) return; closeOpenFolder();
+  showNotif('warn','Not Yet Wired','Git clone is not wired to the backend yet. Use Open Folder or Import Project for now.');
+  logToConsole(`Git clone not implemented for ${url}`, 'warn');
+}
+
+// ═══════════════════════════
+//  TABS
+// ═══════════════════════════
+function openFile(path) {
+  if (activeFile && monacoEditor && !isBinaryProjectEntry(activeFile)) { project.files[activeFile]=monacoEditor.getValue(); }
+  activeFile=path;
+  document.getElementById('status-file').textContent=path.split('/').pop();
+  updateStatusLang(path);
+  if (!openTabs.includes(path)) openTabs.push(path);
+  renderTabs(); buildFileTree(); updateEditorContent(); updateBreadcrumb();
+  if (path.includes('layout')&&path.endsWith('.xml')) debouncePreview();
+}
+
+function openInSplit(path) {
+  splitFile=path;
+  enableSplit();
+  updateSplitContent();
+}
+
+function updateBreadcrumb() {
+  const bc=document.getElementById('breadcrumb');
+  if (!activeFile){bc.innerHTML='';return;}
+  const parts=activeFile.split('/');
+  bc.innerHTML=parts.map((p,i)=>`<span class="bc-item ${i===parts.length-1?'last':''}">${p}</span>`).join('<span class="bc-sep"> › </span>');
+}
+
+function renderTabs() {
+  const tabBar=document.getElementById('tab-bar');
+  // Keep tab-actions
+  const actions=tabBar.querySelector('.tab-actions');
+  tabBar.innerHTML='';
+  if(actions) tabBar.appendChild(actions);
+  openTabs.forEach(path=>{
+    const name=path.split('/').pop();
+    const ext=name.split('.').pop();
+    let icon='📄';
+    if(ext==='java')icon='☕';else if(ext==='kt')icon='🟣';
+    else if(ext==='xml')icon='📐';else if(ext==='gradle')icon='🐘';
+    const isModified=project.modifiedFiles&&project.modifiedFiles.has(path);
+    const tab=document.createElement('div');
+    tab.className=`tab ${activeFile===path?'active':''} ${isModified?'modified':''}`;
+    tab.innerHTML=`${icon} ${name} <span class="tab-dot"></span><span class="tab-close" data-path="${path}">×</span>`;
+    tab.onclick=(e)=>{if(!e.target.dataset.path)openFile(path)};
+    tab.querySelector('.tab-close').onclick=(e)=>{e.stopPropagation();closeTab(path)};
+    tabBar.insertBefore(tab, actions);
+  });
+}
+
+function closeTab(path) {
+  const idx=openTabs.indexOf(path);
+  openTabs.splice(idx,1);
+  if(activeFile===path){activeFile=openTabs[Math.max(0,idx-1)]||null;updateEditorContent();updateBreadcrumb();}
+  renderTabs();buildFileTree();
+}
+
+function updateStatusLang(path) {
+  const ext=path?path.split('.').pop():'';
+  const langs={java:'☕ Java',kt:'🟣 Kotlin',xml:'📐 XML',gradle:'🐘 Gradle',json:'📋 JSON',md:'📝 Markdown'};
+  document.getElementById('status-lang').textContent=langs[ext]||'📄 Text';
+}
+
+// ═══════════════════════════
+//  MONACO
+// ═══════════════════════════
+function getLanguage(path) {
+  if(!path)return'plaintext';
+  const ext=path.split('.').pop();
+  return {java:'java',kt:'kotlin',xml:'xml',gradle:'groovy',json:'json',md:'markdown',kts:'kotlin'}[ext]||'plaintext';
+}
+
+function updateEditorContent() {
+  if (!monacoEditor) return;
+  if (!activeFile) {
+    monacoEditor.updateOptions({ readOnly: false });
+    monacoEditor.setValue('// Select a file from the Project Explorer\n// Use Ctrl+O to open a folder, or create a New Project');
+    return;
+  }
+  const lang = getLanguage(activeFile);
+  const content = getProjectFileText(activeFile);
+  monacoEditor.updateOptions({ readOnly: isBinaryProjectEntry(activeFile) });
+  // Reuse existing model if language matches, otherwise create new one
+  const cur = monacoEditor.getModel();
+  if (cur && monaco.editor.getModel(cur.uri) && cur.getLanguageId() === lang) {
+    cur.setValue(content);
+  } else {
+    const m = monaco.editor.createModel(content, lang);
+    monacoEditor.setModel(m);
+  }
+}
+
+function updateSplitContent() {
+  if (!monacoSplit || !splitFile) return;
+  const lang = getLanguage(splitFile);
+  const content2 = getProjectFileText(splitFile);
+  monacoSplit.updateOptions({ readOnly: isBinaryProjectEntry(splitFile) });
+  const cur2 = monacoSplit.getModel();
+  if (cur2 && cur2.getLanguageId() === lang) {
+    cur2.setValue(content2);
+  } else {
+    const m = monaco.editor.createModel(content2, lang);
+    monacoSplit.setModel(m);
+  }
+}
+
+require.config({paths:{vs:'https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.44.0/min/vs'}});
+require(['vs/editor/editor.main'],function(){
+  const editorOpts={
+    value:'',language:'java',theme:'vs-dark',fontSize:settings.fontSize||13,
+    fontFamily:"'JetBrains Mono',monospace",fontLigatures:true,lineNumbers:'on',
+    minimap:{enabled:settings.minimap!==false},scrollBeyondLastLine:false,
+    automaticLayout:true,tabSize:settings.tabSize||4,
+    wordWrap:settings.wordWrap?'on':'off',
+    renderWhitespace:'selection',bracketPairColorization:{enabled:true},
+    guides:{bracketPairs:true,indentation:true},
+    padding:{top:10,bottom:10},smoothScrolling:true,
+    cursorBlinking:'smooth',cursorSmoothCaretAnimation:'on',
+    suggest:{showKeywords:true,showSnippets:true}
+  };
+  monacoEditor=monaco.editor.create(document.getElementById('monaco-editor'),editorOpts);
+  monacoSplit=monaco.editor.create(document.getElementById('monaco-editor-split'),{...editorOpts,value:''});
+
+  monacoEditor.onDidChangeCursorPosition(e=>{
+    document.getElementById('status-pos').textContent=`Ln ${e.position.lineNumber}, Col ${e.position.column}`;
+  });
+  monacoEditor.onDidChangeModelContent(()=>{
+    if(!activeFile)return;
+    if (isBinaryProjectEntry(activeFile)) return;
+    project.files[activeFile]=monacoEditor.getValue();
+    markModified(activeFile);
+    if(activeFile.includes('layout')&&activeFile.endsWith('.xml'))debouncePreview();
+    if(settings.autoSave)scheduleAutoSave();
+    if(currentPanel==='structure')debounceStructure();
+  });
+  monacoSplit.onDidChangeModelContent(()=>{
+    if(!splitFile)return;
+    if (isBinaryProjectEntry(splitFile)) return;
+    project.files[splitFile]=monacoSplit.getValue();
+    markModified(splitFile);
+  });
+
+  initDefaultProject();
+
+  // Register Android snippets
+  monaco.languages.registerCompletionItemProvider('java',{
+    provideCompletionItems:(model,pos)=>{
+      const suggestions=[
+        {label:'onCreate',kind:monaco.languages.CompletionItemKind.Snippet,insertText:'@Override\nprotected void onCreate(Bundle savedInstanceState) {\n    super.onCreate(savedInstanceState);\n    setContentView(R.layout.${1:activity_main});\n    ${0}\n}',insertTextRules:4,documentation:'onCreate lifecycle method'},
+        {label:'Toast',kind:monaco.languages.CompletionItemKind.Snippet,insertText:'Toast.makeText(this, "${1:message}", Toast.LENGTH_SHORT).show();',insertTextRules:4},
+        {label:'Intent',kind:monaco.languages.CompletionItemKind.Snippet,insertText:'Intent intent = new Intent(this, ${1:TargetActivity}.class);\nstartActivity(intent);',insertTextRules:4},
+        {label:'findViewById',kind:monaco.languages.CompletionItemKind.Snippet,insertText:'${1:View} ${2:view} = findViewById(R.id.${3:viewId});',insertTextRules:4},
+        {label:'onClick',kind:monaco.languages.CompletionItemKind.Snippet,insertText:'${1:view}.setOnClickListener(new View.OnClickListener() {\n    @Override\n    public void onClick(View v) {\n        ${0}\n    }\n});',insertTextRules:4},
+        {label:'SharedPreferences',kind:monaco.languages.CompletionItemKind.Snippet,insertText:'SharedPreferences prefs = getSharedPreferences("${1:MyPrefs}", MODE_PRIVATE);\nSharedPreferences.Editor editor = prefs.edit();\neditor.putString("${2:key}", "${3:value}");\neditor.apply();',insertTextRules:4},
+        {label:'AlertDialog',kind:monaco.languages.CompletionItemKind.Snippet,insertText:'new AlertDialog.Builder(this)\n    .setTitle("${1:Title}")\n    .setMessage("${2:Message}")\n    .setPositiveButton("OK", null)\n    .show();',insertTextRules:4},
+        {label:'AsyncTask',kind:monaco.languages.CompletionItemKind.Snippet,insertText:'new Thread(() -> {\n    // Background work\n    runOnUiThread(() -> {\n        // UI update\n        ${0}\n    });\n}).start();',insertTextRules:4},
+      ];
+      return{suggestions};
+    }
+  });
+});
+
+project.modifiedFiles = new Set();
+function markModified(path) {
+  project.modifiedFiles.add(path);
+  updateSyncBadge('unsaved');
+  renderTabs();
+}
+
+// ═══════════════════════════
+//  AUTO SAVE & SYNC
+// ═══════════════════════════
+function scheduleAutoSave() {
+  clearTimeout(autoSaveTimer);
+  autoSaveTimer=setTimeout(()=>{
+    if(project.modifiedFiles&&project.modifiedFiles.size>0){
+      autoSaveAll();
+    }
+  }, settings.autoSaveDelay||2000);
+}
+
+async function autoSaveAll() {
+  try {
+    await syncProjectToBackend({ silent: true });
+  } catch (e) {
+    logToConsole('Auto-save failed: ' + (e.message || 'unknown error'), 'error');
+  }
+}
+
+async function saveCurrentFile() {
+  if (!activeFile || !monacoEditor) return;
+  if (!isBinaryProjectEntry(activeFile)) {
+    project.files[activeFile] = monacoEditor.getValue();
+  }
+  try {
+    await syncProjectToBackend({ silent: true });
+    showToast('💾 Saved: ' + activeFile.split('/').pop());
+    logToConsole('Saved: ' + activeFile, 'success');
+  } catch (e) {
+    project.modifiedFiles.add(activeFile);
+    renderTabs();
+    showError('Save failed: ' + (e.message || 'unknown error'));
+    logToConsole('Save failed: ' + (e.message || 'unknown error'), 'error');
+  }
+}
+
+async function saveAllFiles() {
+  try {
+    await syncProjectToBackend({ silent: true });
+    showToast('💾 All files saved');
+    logToConsole('All files saved (' + Object.keys(project.files).length + ' files)', 'success');
+  } catch (e) {
+    showError('Save failed: ' + (e.message || 'unknown error'));
+    logToConsole('Save failed: ' + (e.message || 'unknown error'), 'error');
+  }
+}
+
+async function syncProject() {
+  updateSyncBadge('syncing');
+  logToConsole('Syncing project with Gradle files...','info');
+  try {
+    await syncProjectToBackend({ silent: true });
+    logToConsole('Backend sync complete.','success');
+    showNotif('success','Sync Complete','Project synced with backend');
+  } catch (e) {
+    updateSyncBadge('unsaved');
+    showError('Sync failed: ' + (e.message||'unknown error'));
+    logToConsole('Sync failed: ' + (e.message||'unknown error'),'error');
+  }
+}
+
+function updateSyncBadge(state) {
+  const badge=document.getElementById('sync-badge');
+  const text=document.getElementById('sync-text');
+  badge.className='sync-badge '+state;
+  text.textContent={synced:'Synced',syncing:'Syncing...',unsaved:'Unsaved'}[state]||state;
+}
+
+// ═══════════════════════════
+//  FIND / REPLACE
+// ═══════════════════════════
+function openFindBar() { const fb=document.getElementById('find-bar'); fb.classList.add('open'); document.getElementById('find-input').focus(); closeAllMenus({target:document.body}); }
+function openFindReplace() { openFindBar(); document.getElementById('replace-input').focus(); }
+function closeFindBar() { document.getElementById('find-bar').classList.remove('open'); if(monacoEditor)monacoEditor.focus(); }
+
+function doFind() {
+  const q=document.getElementById('find-input').value;
+  if(!q||!monacoEditor){document.getElementById('find-count').textContent='';return;}
+  const content=monacoEditor.getValue();
+  const matches=(content.match(new RegExp(q.replace(/[.*+?^${}()|[\]\\]/g,'\\$&'),'gi'))||[]).length;
+  document.getElementById('find-count').textContent=matches?`${matches} match${matches!==1?'es':''}`:q?'No matches':'';
+  monacoEditor.trigger('','actions.find');
+}
+
+function doReplace() {
+  if(!monacoEditor)return;
+  const q=document.getElementById('find-input').value;
+  const r=document.getElementById('replace-input').value;
+  if(!q)return;
+  const val=monacoEditor.getValue().replace(q,r);
+  monacoEditor.setValue(val);
+  showToast('Replace done');
+}
+
+function doReplaceAll() {
+  if(!monacoEditor)return;
+  const q=document.getElementById('find-input').value;
+  const r=document.getElementById('replace-input').value;
+  if(!q)return;
+  const old=monacoEditor.getValue();
+  const n=old.replace(new RegExp(q.replace(/[.*+?^${}()|[\]\\]/g,'\\$&'),'gi'),r);
+  const count=(old.match(new RegExp(q,'gi'))||[]).length;
+  monacoEditor.setValue(n);
+  showToast(`Replaced ${count} occurrence(s)`);
+  document.getElementById('find-count').textContent='';
+}
+
+// Search in files
+let searchOptState={case:false,word:false,regex:false};
+function toggleSearchOpt(opt){searchOptState[opt]=!searchOptState[opt];document.getElementById('sopt-'+opt).classList.toggle('on',searchOptState[opt]);searchInFiles();}
+function searchInFiles() {
+  const q=document.getElementById('search-query').value;
+  const out=document.getElementById('search-results');
+  const cnt=document.getElementById('search-count');
+  if(!q){out.innerHTML='';cnt.textContent='';return;}
+  let pattern;
+  try{pattern=searchOptState.regex?new RegExp(q,searchOptState.case?'g':'gi'):new RegExp(q.replace(/[.*+?^${}()|[\]\\]/g,'\\$&'),searchOptState.case?'g':'gi');}catch(e){cnt.textContent='Invalid regex';return;}
+  let total=0,html='';
+  Object.entries(project.files).forEach(([path,content])=>{
+    if(!content || isBinaryProjectEntry(path, content)) return;
+    const lines=content.split('\n');
+    const matches=[];
+    lines.forEach((line,i)=>{const m=line.match(pattern);if(m){matches.push({line:i+1,text:line.trim(),count:m.length});total+=m.length;}});
+    if(matches.length){
+      html+=`<div class="sr-file">📄 ${path.split('/').pop()} <span style="color:var(--text-muted);font-weight:400;font-size:10px">(${matches.length} match${matches.length!==1?'es':''})</span></div>`;
+      matches.slice(0,8).forEach(m=>{
+        const highlighted=m.text.replace(pattern,s=>`<mark>${s}</mark>`);
+        html+=`<div class="sr-match" onclick="openFile('${path}');setTimeout(()=>jumpToLine(${m.line}),200)"><span style="color:var(--text-muted);margin-right:6px">${m.line}:</span>${highlighted}</div>`;
+      });
+    }
+  });
+  out.innerHTML=html||`<div style="color:var(--text-muted);font-size:11px;padding:8px 4px">No results found</div>`;
+  cnt.textContent=total?`${total} result${total!==1?'s':''} across project`:'No matches';
+}
+
+function replaceInFiles(){
+  const q=document.getElementById('search-query').value;
+  const r=document.getElementById('replace-query').value;
+  if(!q)return;
+  let count=0;
+  Object.keys(project.files).forEach(path=>{
+    if (isBinaryProjectEntry(path)) return;
+    const old=getProjectFileText(path);
+    const n=old.replace(new RegExp(q.replace(/[.*+?^${}()|[\]\\]/g,'\\$&'),'gi'),r);
+    if(n!==old){project.files[path]=n;count++;}
+  });
+  if(activeFile&&monacoEditor){monacoEditor.setValue(getProjectFileText(activeFile));}
+  showToast(`Replaced in ${count} file(s)`);
+  searchInFiles();
+}
+
+function jumpToLine(line){if(monacoEditor)monacoEditor.revealLineInCenter(line);}
+
+// ═══════════════════════════
+//  SPLIT EDITOR
+// ═══════════════════════════
+function toggleSplit() {
+  splitOpen=!splitOpen;
+  enableSplit(splitOpen);
+  closeAllMenus({target:document.body});
+}
+function enableSplit(on=true) {
+  splitOpen=on;
+  const el=document.getElementById('editor-wrapper-split');
+  const handle=document.getElementById('split-handle');
+  el.style.display=on?'block':'none';
+  handle.style.display=on?'block':'none';
+  if(on&&activeFile&&!splitFile){splitFile=activeFile;updateSplitContent();}
+}
+
+// ═══════════════════════════
+//  FILE STRUCTURE
+// ═══════════════════════════
+let structureTimeout;
+function debounceStructure(){clearTimeout(structureTimeout);structureTimeout=setTimeout(buildStructure,800);}
+function buildStructure(){
+  const el=document.getElementById('structure-panel');
+  if(!activeFile||!project.files[activeFile]||isBinaryProjectEntry(activeFile)){el.innerHTML='<div style="padding:12px;color:var(--text-muted);font-size:11px">Open a text source file to see its structure</div>';return;}
+  const code=getProjectFileText(activeFile);
+  const items=[];
+  // Parse classes
+  (code.match(/(?:public\s+)?(?:class|interface|enum)\s+(\w+)/g)||[]).forEach(m=>{
+    const n=m.match(/(?:class|interface|enum)\s+(\w+)/); if(n) items.push({type:m.includes('interface')?'interface':m.includes('enum')?'enum':'class',name:n[1]});
+  });
+  // Parse methods
+  (code.match(/(?:public|private|protected|static|void|\w+)\s+\w+\s*\([^)]*\)\s*(?:throws\s+\w+\s*)?\{/g)||[]).forEach(m=>{
+    const n=m.match(/\s(\w+)\s*\(/); if(n&&!['if','for','while','switch','catch'].includes(n[1])) items.push({type:'method',name:n[1]+'()'});
+  });
+  // Parse fields
+  (code.match(/(?:private|protected|public)\s+(?:static\s+)?(?:final\s+)?\w+\s+\w+\s*[;=]/g)||[]).forEach(m=>{
+    const n=m.match(/\s(\w+)\s*[;=]/); if(n) items.push({type:'field',name:n[1]});
+  });
+  el.innerHTML=items.length?items.map(item=>{
+    const icons={class:'🔷',interface:'🔶',enum:'🔵',method:'🟢',field:'🟡'};
+    const typeClasses={class:'st-class',interface:'st-interface',method:'st-method',field:'st-field'};
+    return`<div class="struct-item"><span class="struct-icon">${icons[item.type]||'•'}</span>${item.name}<span class="struct-type ${typeClasses[item.type]||''}">${item.type}</span></div>`;
+  }).join(''):'<div style="padding:12px;color:var(--text-muted);font-size:11px">No structure found</div>';
+}
+
+// ═══════════════════════════
+//  GIT SIMULATION
+// ═══════════════════════════
+let gitLog=[];
+function buildGitPanel(){
+  const el=document.getElementById('git-changes');
+  const changed=Object.keys(project.files).filter(f=>project.modifiedFiles&&project.modifiedFiles.has(f));
+  const untracked=Object.keys(project.files).slice(0,3).filter(f=>!changed.includes(f));
+  let html='';
+  if(changed.length){
+    changed.forEach(f=>{html+=`<div class="git-file-item"><span class="git-status gs-modified">M</span>${f.split('/').pop()}<span style="font-size:9px;color:var(--text-muted);margin-left:auto">${f}</span></div>`;});
+  }
+  if(untracked.length){
+    html+=`<div class="git-section-title">Untracked</div>`;
+    untracked.forEach(f=>{html+=`<div class="git-file-item"><span class="git-status gs-untracked">?</span>${f.split('/').pop()}</div>`;});
+  }
+  if(!html) html='<div style="padding:12px;color:var(--text-muted);font-size:11px">✓ No changes to commit</div>';
+  el.innerHTML=html;
+}
+
+function gitStageAll(){buildGitPanel();showToast('✓ All changes staged');}
+function gitCommit(){
+  const msg=document.getElementById('git-commit-msg').value.trim();
+  if(!msg){showToast('⚠ Please enter a commit message');return;}
+  const hash=Math.random().toString(16).slice(2,9);
+  logToConsole(`[main ${hash}] ${msg}`,'success');
+  logToConsole(`${(project.modifiedFiles||new Set()).size} files changed`,'info');
+  project.modifiedFiles&&project.modifiedFiles.clear();
+  document.getElementById('git-commit-msg').value='';
+  renderTabs(); buildGitPanel(); updateSyncBadge('synced');
+  showNotif('success','Commit Created',`[${project.branch} ${hash}] ${msg}`);
+}
+function gitPull(){logToConsole('Pulling from remote origin/main...','info');setTimeout(()=>{logToConsole('Already up to date.','success');showNotif('info','Git Pull','Already up to date')},1200);}
+function gitPush(){logToConsole('Pushing to remote origin/main...','info');setTimeout(()=>{logToConsole('Everything up-to-date','success');showNotif('success','Git Push','Push successful')},1500);}
+function gitRefresh(){buildGitPanel();}
+function gitCheckout(){const b=prompt('Branch name:',project.branch);if(!b)return;project.branch=b;document.getElementById('git-branch').textContent=b;document.querySelector('#statusbar .status-item').textContent='🌿 '+b;showToast('Switched to branch: '+b);}
+
+// ═══════════════════════════
+//  CONSOLE
+// ═══════════════════════════
+function logToConsole(msg, type='info', tag='') {
+  const out=document.getElementById('console-output');
+  const now=new Date();
+  const time=`${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}:${String(now.getSeconds()).padStart(2,'0')}`;
+  const el=document.createElement('div');
+  el.className='log-line';
+  el.innerHTML=`<span class="log-time">${time}</span>${tag?`<span class="log-tag">${tag}</span>`:''}<span class="log-${type}">${msg}</span>`;
+  out.appendChild(el);
+  out.scrollTop=out.scrollHeight;
+}
+function clearConsole(){document.getElementById('console-output').innerHTML='';}
+function toggleConsole(){const cp=document.getElementById('console-panel');cp.classList.toggle('collapsed');closeAllMenus({target:document.body});}
+
+function switchConsoleTab(tab) {
+  currentConsoleTab=tab;
+  document.querySelectorAll('.console-tab').forEach(t=>t.classList.remove('active'));
+  document.getElementById('ctab-'+tab)&&document.getElementById('ctab-'+tab).classList.add('active');
+  clearConsole();
+  closeAllMenus({target:document.body});
+  if(tab==='logcat'){
+    logToConsole('D/ActivityManager: Start proc com.example.app','info','D/ActivityManager');
+    logToConsole('I/System.out: onCreate called','info','I/MainActivity');
+    logToConsole('D/ViewRootImpl: Traversal done in 14ms','info','D/ViewRootImpl');
+    logToConsole('I/Choreographer: Skipped 2 frames','warn','I/Choreographer');
+  } else if(tab==='problems') {
+    logToConsole('No errors or warnings in current project','success');
+  } else if(tab==='terminal') {
+    logToConsole('$ AndroidBox Terminal','info');
+    logToConsole('Type commands to interact with the build system','info');
+    logToConsole('$ _','success');
+  }
+}
+
+// ═══════════════════════════
+//  PREVIEW
+// ═══════════════════════════
+// ═══════════════════════════════════════════════════════
+//  PREVIEW ENGINE — complete rewrite
+// ═══════════════════════════════════════════════════════
+let previewTimeout;
+function debouncePreview(){clearTimeout(previewTimeout);previewTimeout=setTimeout(refreshPreview,700);}
+
+function refreshPreview(){
+  if (!document.getElementById('preview-content')) return;
+  let targetXml = null;
+  if (activeFile && activeFile.includes('layout') && activeFile.endsWith('.xml')) {
+    targetXml = activeFile;
+  } else {
+    targetXml = Object.keys(project.files).find(f => f.includes('activity_main') && f.endsWith('.xml'))
+             || Object.keys(project.files).find(f => f.includes('layout') && f.endsWith('.xml'));
+  }
+
+  const screen    = document.getElementById('phone-screen');
+  const content   = document.getElementById('preview-content');
+  const appBarDiv = document.getElementById('phone-app-bar');
+  const appTitle  = document.getElementById('preview-app-title');
+
+  const strSrc    = project.files['app/res/values/strings.xml'] || project.files['app/src/main/res/values/strings.xml'] || '';
+  const colorsSrc = project.files['app/res/values/colors.xml']  || project.files['app/src/main/res/values/colors.xml']  || '';
+  const themesSrc = project.files['app/res/values/themes.xml']  || project.files['app/src/main/res/values/themes.xml']  || project.files['app/res/values/styles.xml'] || project.files['app/src/main/res/values/styles.xml'] || '';
+
+  // App title from strings.xml
+  const nameM = strSrc.match(/<string[^>]*name="app_name"[^>]*>([^<]+)<\/string>/);
+  const appName = nameM ? nameM[1] : (project.name || 'MyApp');
+  if (appTitle) appTitle.textContent = appName;
+
+  // Window background
+  const bgM = themesSrc.match(/name="android:windowBackground"[^>]*>([^<]+)<\/item>/);
+  screen.style.background = bgM ? (resolveColorValue(bgM[1], colorsSrc) || '#FAFAFA') : '#FAFAFA';
+
+  if (!targetXml || !project.files[targetXml]) {
+    if (appBarDiv) appBarDiv.style.display = 'flex';
+    content.innerHTML = '<div style="padding:20px 16px;color:#9e9e9e;font-size:11px;text-align:center">📐<br><br>No layout XML found.<br><code style=\'font-size:10px\'>app/res/layout/activity_main.xml</code></div>';
+    return;
+  }
+
+  const xmlSrc = project.files[targetXml];
+
+  // Detect if the XML itself has a Toolbar/AppBarLayout at the top level
+  // If so, hide the fake app bar so it doesn't double up
+  const hasOwnToolbar = /(<Toolbar|<MaterialToolbar|<androidx\.appcompat\.widget\.Toolbar|AppBarLayout|CoordinatorLayout)/i.test(xmlSrc);
+  if (appBarDiv) {
+    if (hasOwnToolbar) {
+      appBarDiv.style.display = 'none';
+    } else {
+      appBarDiv.style.display = 'flex';
+      // Try to match app bar color from theme
+      const primaryM = colorsSrc.match(/<color[^>]*name="colorPrimary"[^>]*>([^<]+)<\/color>/);
+      const primaryColor = primaryM ? resolveColorValue(primaryM[1].trim(), colorsSrc) : null;
+      const themeColorM = themesSrc.match(/name="colorPrimary"[^>]*>([^<]+)<\/item>/);
+      const themeColor = themeColorM ? resolveColorValue(themeColorM[1].trim(), colorsSrc) : null;
+      appBarDiv.style.background = themeColor || primaryColor || '#6200EE';
+    }
+  }
+
+  const rendered = renderXMLLayout(xmlSrc, colorsSrc, strSrc);
+  content.innerHTML = rendered;
+  closeAllMenus({target:document.body});
+}
+
+function rotateDevice(){
+  phonePortrait = !phonePortrait;
+  const frame = document.getElementById('phone-frame');
+  frame.classList.toggle('portrait', phonePortrait);
+  frame.classList.toggle('landscape', !phonePortrait);
+  refreshPreview();
+}
+
+function changeDevice(){
+  const sel = document.getElementById('device-selector').value;
+  const info = {
+    pixel6:'Pixel 6 · 1080×2340', pixel4:'Pixel 4 · 1080×2280',
+    nexus5:'Nexus 5 · 1080×1920', tablet7:'7" Tablet · 1200×1920',
+    tablet10:'10" Tablet · 1600×2560', fold:'Galaxy Fold · 1768×2208'
+  };
+  document.getElementById('preview-device-info').textContent = info[sel] || sel;
+  const frame = document.getElementById('phone-frame');
+  const sizes = { tablet7:'240px', tablet10:'260px', fold:'230px' };
+  frame.style.width = sizes[sel] || '';
+  refreshPreview();
+}
+
+function togglePreviewPanel(){
+  document.getElementById('preview-panel').classList.toggle('collapsed');
+  closeAllMenus({target:document.body});
+}
+
+// ═══════════════════════════════════════════════════════
+//  FULL XML LAYOUT RENDERER
+// ═══════════════════════════════════════════════════════
+
+function renderXMLLayout(xml, colorsSrc, strSrc) {
+  if (!xml || !xml.trim()) return '<div style="padding:16px;color:#9e9e9e;font-size:11px;text-align:center">Empty layout</div>';
+
+  // Preprocess: strip XML declaration, comments, xmlns declarations
+  // Then normalise tag names (strip dotted package paths and colon prefixes)
+  // but KEEP android:/app: on attribute names so getAttr can find them
+  let cleaned = xml
+    .replace(/<!--[\s\S]*?-->/g, '')             // remove XML comments
+    .replace(/<\?[^?]*\?>/g, '')                 // remove <?xml ...?>
+    // keep xmlns declarations so prefixed attrs (android:, app:) remain valid
+    .replace(/(<\/?)[\w.]+\.([\w]+)(\s|\/?>)/g, '$1$2$3')  // pkg.Class -> Class in tag names
+    .replace(/(<\/?)[\w]+:([\w]+)(\s|\/?>)/g, '$1$2$3')     // ns:Class -> Class in tag names
+    .trim();
+
+  // Wrap in a root if needed (some layouts have multiple roots)
+  if (!cleaned.startsWith('<')) {
+    return '<div style="padding:10px;color:#f44336;font-size:10px">⚠ No XML content</div>';
+  }
+
+  try {
+    const parser = new DOMParser();
+    let doc = parser.parseFromString('<_root_>' + cleaned + '</_root_>', 'application/xml');
+    const parseErr = doc.querySelector('parsererror');
+    if (parseErr) {
+      // Second pass: strip attribute prefixes (android:, app:, tools:) if needed
+      const noAttrNs = cleaned.replace(/(\s)[a-zA-Z0-9_]+:([a-zA-Z0-9_:-]+)=/g, '$1$2=');
+      doc = parser.parseFromString('<_root_>' + noAttrNs + '</_root_>', 'application/xml');
+      const parseErr2 = doc.querySelector('parsererror');
+      if (!parseErr2) {
+        const root2 = doc.documentElement.children[0];
+        return root2 ? `<div style="width:100%;min-height:100%;box-sizing:border-box;display:block;">${renderNode(root2, colorsSrc || '', strSrc || '', null)}</div>` : '<div style="padding:10px;color:#9e9e9e;font-size:10px">Empty layout</div>';
+      }
+      // Last resort: try wrapping differently
+      const doc2 = parser.parseFromString(cleaned, 'application/xml');
+      const err2 = doc2.querySelector('parsererror');
+      if (err2) {
+        return `<div style="padding:10px;color:#f44336;font-size:10px;font-family:monospace;white-space:pre-wrap">⚠ XML parse error — check your layout syntax</div>`;
+      }
+      return renderNode(doc2.documentElement, colorsSrc || '', strSrc || '', null);
+    }
+    // Render the first real child of our wrapper
+    const root = doc.documentElement.children[0];
+    if (!root) return '<div style="padding:10px;color:#9e9e9e;font-size:10px">Empty layout</div>';
+    return `<div style="width:100%;min-height:100%;box-sizing:border-box;display:block;">${renderNode(root, colorsSrc || '', strSrc || '', null)}</div>`;
+  } catch(e) {
+    return `<div style="padding:10px;color:#f44336;font-size:10px">⚠ ${e.message}</div>`;
+  }
+}
+
+// ── Attribute helpers ──────────────────────────────────
+
+function getAttr(el, name) {
+  // After namespace stripping most attrs are bare, but DOMParser may leave android: prefix
+  return el.getAttribute(name)
+      || el.getAttribute('android:' + name)
+      || el.getAttribute('app:' + name)
+      || '';
+}
+
+function shortTag(tagName) {
+  // "androidx.constraintlayout.widget.ConstraintLayout" → "ConstraintLayout"
+  // Also handle "com.google.android.material.button.MaterialButton" → "MaterialButton"
+  return (tagName || '').split('.').pop();
+}
+
+function resolveText(val, strSrc) {
+  if (!val) return '';
+  if (val.startsWith('@string/')) {
+    const key = val.slice(8);
+    const m = (strSrc || '').match(new RegExp('<string\\s+name="' + key + '"[^>]*>([^<]*)</string>'));
+    return m ? m[1] : key;
+  }
+  return val;
+}
+
+function resolveColorValue(val, colorsSrc) {
+  if (!val) return null;
+  val = val.trim();
+  if (val.startsWith('#')) return val;
+  // Named android colors
+  const named = {
+    '@android:color/white': '#FFFFFF',
+    '@android:color/black': '#000000',
+    '@android:color/transparent': 'transparent',
+    '@android:color/background_light': '#FFFFFF',
+    '@android:color/darker_gray': '#888888',
+    'white': '#FFFFFF', 'black': '#000000',
+  };
+  if (named[val]) return named[val];
+  // Look up in colors.xml
+  if (val.startsWith('@color/') && colorsSrc) {
+    const key = val.slice(7);
+    const m = colorsSrc.match(new RegExp('<color\\s+name="' + key + '"[^>]*>([^<]+)</color>'));
+    if (m) return resolveColorValue(m[1].trim(), colorsSrc); // recursive for @color refs
+  }
+  // Common Material color aliases
+  const aliases = {
+    '@color/colorPrimary':'#6200EE', '@color/colorPrimaryDark':'#3700B3',
+    '@color/colorAccent':'#03DAC5',  '@color/purple_500':'#6200EE',
+    '@color/purple_200':'#BB86FC',   '@color/teal_200':'#03DAC5',
+    '@color/teal_700':'#018786',     '@color/black':'#000000',
+    '@color/white':'#FFFFFF',
+  };
+  return aliases[val] || null;
+}
+
+function dp(val) {
+  // Convert dp/sp string to px number (using ~1.5 scale for small screen preview)
+  if (!val || val === 'wrap_content' || val === 'match_parent' || val === 'fill_parent') return null;
+  const n = parseFloat(val);
+  if (isNaN(n)) return null;
+  if (val.endsWith('dp') || val.endsWith('sp') || val.endsWith('dip')) return Math.round(n * 0.55);
+  if (val.endsWith('px')) return Math.round(n * 0.15);
+  return Math.round(n * 0.55);
+}
+
+function dpPx(val) {
+  const v = dp(val); return v !== null ? v + 'px' : null;
+}
+
+function isMatch(val) { return val === 'match_parent' || val === 'fill_parent' || val === '0dp'; }
+function isWrap(val)  { return !val || val === 'wrap_content'; }
+
+function gravityStyle(gravity, isLayout) {
+  // Convert android:gravity / android:layout_gravity to CSS
+  if (!gravity) return '';
+  const g = gravity.toLowerCase();
+  let styles = '';
+  if (isLayout) {
+    // layout_gravity = align self in parent
+    if (g.includes('center_horizontal') || g === 'center') styles += 'margin-left:auto;margin-right:auto;';
+    if (g.includes('center_vertical')) styles += 'align-self:center;';
+    if (g.includes('right') || g.includes('end')) styles += 'margin-left:auto;';
+    if (g.includes('bottom')) styles += 'margin-top:auto;';
+  } else {
+    // gravity = align children / text inside
+    if (g.includes('center_horizontal') || g === 'center') styles += 'text-align:center;justify-content:center;align-items:center;';
+    if (g.includes('center_vertical')) styles += 'align-items:center;';
+    if (g.includes('center') && !g.includes('_')) styles += 'text-align:center;justify-content:center;align-items:center;';
+    if (g.includes('right') || g.includes('end')) styles += 'text-align:right;justify-content:flex-end;';
+    if (g.includes('bottom')) styles += 'justify-content:flex-end;';
+  }
+  return styles;
+}
+
+function weightStyle(weight, orientation) {
+  if (!weight || weight === '0') return '';
+  const w = parseFloat(weight);
+  if (!w) return '';
+  // For weight children: flex grow, and override width/height
+  return orientation === 'horizontal'
+    ? `flex:${w};min-width:0;width:auto!important;`
+    : `flex:${w};min-height:0;height:auto!important;`;
+}
+
+// ── Main node renderer ─────────────────────────────────
+
+function renderNode(el, colorsSrc, strSrc, parentOrientation, parentTag) {
+  if (!el || el.nodeType === 3 || el.nodeType === 8) return ''; // text / comment node
+  if (el.nodeType !== 1) return '';
+
+  const tag = shortTag(el.tagName);
+  const a = (name) => getAttr(el, name);
+  const color = (val) => resolveColorValue(val, colorsSrc);
+  const txt = (val) => resolveText(val, strSrc);
+
+  // Dimensions
+  const w = a('layout_width');
+  const h = a('layout_height');
+  const isW0 = (w === '0dp' || w === '0');
+  const isH0 = (h === '0dp' || h === '0');
+  const wStyle = isW0 ? '' : (isMatch(w) ? 'width:100%;box-sizing:border-box;' : (dp(w) !== null ? `width:${dpPx(w)};box-sizing:border-box;` : ''));
+  const hStyle = isH0 ? '' : (isMatch(h) ? 'min-height:60px;' : (dp(h) !== null ? `height:${dpPx(h)};` : ''));
+
+  // Margins
+  const margin = a('layout_margin');
+  const mAll   = dp(margin);
+  const mT = dp(a('layout_marginTop'))    ?? dp(a('layout_marginVertical'))   ?? mAll ?? 0;
+  const mB = dp(a('layout_marginBottom')) ?? dp(a('layout_marginVertical'))   ?? mAll ?? 0;
+  const mL = dp(a('layout_marginLeft'))   ?? dp(a('layout_marginStart'))      ?? dp(a('layout_marginHorizontal')) ?? mAll ?? 0;
+  const mR = dp(a('layout_marginRight'))  ?? dp(a('layout_marginEnd'))        ?? dp(a('layout_marginHorizontal')) ?? mAll ?? 0;
+  const marginStyle = (mT||mB||mL||mR) ? `margin:${mT}px ${mR}px ${mB}px ${mL}px;` : '';
+
+  // Padding
+  const padAll = dp(a('padding'));
+  const pT = dp(a('paddingTop'))    ?? dp(a('paddingVertical'))   ?? padAll;
+  const pB = dp(a('paddingBottom')) ?? dp(a('paddingVertical'))   ?? padAll;
+  const pL = dp(a('paddingLeft'))   ?? dp(a('paddingStart'))      ?? dp(a('paddingHorizontal')) ?? padAll;
+  const pR = dp(a('paddingRight'))  ?? dp(a('paddingEnd'))        ?? dp(a('paddingHorizontal')) ?? padAll;
+  const paddingStyle = (pT||pB||pL||pR) ? `padding:${pT||0}px ${pR||0}px ${pB||0}px ${pL||0}px;` : '';
+
+  // Background
+  const bgRaw = a('background') || a('backgroundTint');
+  const bg    = color(bgRaw);
+  const bgStyle = bg ? `background:${bg};` : '';
+
+  // Elevation / shadow
+  const elev = dp(a('elevation'));
+  const elevStyle = elev ? `box-shadow:0 ${Math.min(elev,4)}px ${elev*2}px rgba(0,0,0,${Math.min(0.3, elev*0.04)});` : '';
+
+  // Layout weight
+  const weight = a('layout_weight');
+  const orientation = a('orientation') || 'vertical'; // for LinearLayout children
+
+  // Text attributes
+  const textVal   = txt(a('text'));
+  const textColor = color(a('textColor')) || '#212121';
+  const textSize  = dpPx(a('textSize'))   || '13px';
+  const textStyle = a('textStyle') || '';
+  const fontW     = textStyle.includes('bold')   ? 'font-weight:700;' : '';
+  const fontI     = textStyle.includes('italic') ? 'font-style:italic;' : '';
+  const hintVal   = txt(a('hint'));
+  const grav      = a('gravity');
+  const lgrav     = a('layout_gravity');
+  const gravS     = gravityStyle(grav, false);
+  const lgravS    = gravityStyle(lgrav, true);
+
+  // Children (render all child elements), pass this node's orientation so weight works
+  const myOrientation = a('orientation') || 'vertical';
+  const children = Array.from(el.childNodes)
+    .map(child => renderNode(child, colorsSrc, strSrc, myOrientation, tag))
+    .join('');
+
+  // Apply layout_weight when inside a LinearLayout
+  const weightStr = weight ? weightStyle(weight, parentOrientation || 'vertical') : '';
+  const cStyle = constraintStyle();
+  const baseStyle = weightStr + wStyle + hStyle + marginStyle + bgStyle + elevStyle + lgravS + cStyle;
+
+  // ConstraintLayout child positioning (basic)
+  function constraintStyle() {
+    if (parentTag !== 'ConstraintLayout') return '';
+    const topToTop = a('layout_constraintTop_toTopOf');
+    const topToBottom = a('layout_constraintTop_toBottomOf');
+    const bottomToBottom = a('layout_constraintBottom_toBottomOf');
+    const bottomToTop = a('layout_constraintBottom_toTopOf');
+    const startToStart = a('layout_constraintStart_toStartOf') || a('layout_constraintLeft_toLeftOf');
+    const startToEnd = a('layout_constraintStart_toEndOf') || a('layout_constraintLeft_toRightOf');
+    const endToEnd = a('layout_constraintEnd_toEndOf') || a('layout_constraintRight_toRightOf');
+    const endToStart = a('layout_constraintEnd_toStartOf') || a('layout_constraintRight_toLeftOf');
+    const w0 = (w === '0dp' || w === '0') ? true : false;
+    const h0 = (h === '0dp' || h === '0') ? true : false;
+    let s = 'position:absolute;';
+    if (topToTop || topToBottom) s += `top:${mT}px;`;
+    if (bottomToBottom || bottomToTop) s += `bottom:${mB}px;`;
+    if (startToStart || startToEnd) s += `left:${mL}px;`;
+    if (endToEnd || endToStart) s += `right:${mR}px;`;
+    if ((startToStart || startToEnd) && (endToEnd || endToStart) && w0) s += 'width:auto;';
+    if ((topToTop || topToBottom) && (bottomToBottom || bottomToTop) && h0) s += 'height:auto;';
+    return s;
+  }
+
+  // ── Layout containers ──────────────────────────────
+  switch (tag) {
+
+    case 'LinearLayout':
+    case 'RadioGroup': {
+      const isH = (a('orientation') || 'vertical') === 'horizontal';
+      const flexDir = isH ? 'row' : 'column';
+      let alignItems = isH ? 'center' : 'stretch';
+      let justifyContent = 'flex-start';
+      if (grav) {
+        const g = grav.toLowerCase();
+        if (g === 'center') { alignItems = 'center'; justifyContent = 'center'; }
+        else if (g === 'center_horizontal') { isH ? (justifyContent = 'center') : (alignItems = 'center'); }
+        else if (g === 'center_vertical')   { isH ? (alignItems = 'center')     : (justifyContent = 'center'); }
+        else if (g.includes('center'))      { alignItems = 'center'; justifyContent = 'center'; }
+        if (g.includes('right') || g.includes('end'))  { isH ? (justifyContent = 'flex-end') : (alignItems = 'flex-end'); }
+        if (g.includes('bottom'))                       { isH ? (alignItems = 'flex-end') : (justifyContent = 'flex-end'); }
+      }
+      const hasWeight = Array.from(el.children).some(c => getAttr(c,'layout_weight') || getAttr(c,'android:layout_weight'));
+      const wFull = 'width:100%;box-sizing:border-box;';
+      const hFlex = (isMatch(h) && hasWeight) ? 'flex:1;' : '';
+      return `<div style="display:flex;flex-direction:${flexDir};align-items:${alignItems};justify-content:${justifyContent};${wFull}${hFlex}${bgStyle}${marginStyle}${paddingStyle}">${children}</div>`;
+    }
+
+    case 'ConstraintLayout':
+    case 'RelativeLayout':
+    case 'AbsoluteLayout': {
+      // ConstraintLayout: basic absolute positioning for children
+      const clMin = isMatch(h) ? 'min-height:200px;' : '';
+      const disp = tag === 'ConstraintLayout' ? 'display:block;position:relative;' : 'display:flex;flex-direction:column;position:relative;';
+      return `<div style="${disp}${clMin}${baseStyle}${paddingStyle}box-sizing:border-box;">${children}</div>`;
+    }
+
+    case 'FrameLayout': {
+      const flW = isMatch(w) ? 'width:100%;' : '';
+      return `<div style="position:relative;${flW}${hStyle}${marginStyle}${bgStyle}${paddingStyle}box-sizing:border-box;">${children}</div>`;
+    }
+
+    case 'ScrollView':
+    case 'NestedScrollView': {
+      const svH = isMatch(h) ? 'flex:1;min-height:0;' : (dp(h) ? `height:${dpPx(h)};` : 'max-height:220px;');
+      return `<div style="overflow-y:auto;overflow-x:hidden;${svH}width:100%;${marginStyle}${bgStyle}${paddingStyle}">${children}</div>`;
+    }
+    case 'HorizontalScrollView': {
+      return `<div style="overflow-x:auto;overflow-y:hidden;display:flex;${marginStyle}${bgStyle}${paddingStyle}">${children}</div>`;
+    }
+
+    case 'CoordinatorLayout': {
+      const clH2 = isMatch(h) ? 'flex:1;min-height:0;' : '';
+      return `<div style="display:flex;flex-direction:column;position:relative;width:100%;${clH2}${bgStyle}${paddingStyle}${marginStyle}">${children}</div>`;
+    }
+    case 'DrawerLayout':
+      return `<div style="position:relative;width:100%;overflow:hidden;${bgStyle}${paddingStyle}${marginStyle}">${children}</div>`;
+
+    case 'AppBarLayout': {
+      const abBg = bg || '#6200EE';
+      return `<div style="background:${abBg};width:100%;flex-shrink:0;${marginStyle}">${children}</div>`;
+    }
+
+    case 'CardView':
+    case 'MaterialCardView': {
+      const cr = dpPx(a('cardCornerRadius') || a('cornerRadius')) || '10px';
+      const pad = paddingStyle || 'padding:10px;';
+      const cardBg = bg || '#ffffff';
+      return `<div style="background:${cardBg};border-radius:${cr};box-shadow:0 6px 14px rgba(0,0,0,.18);${baseStyle}${pad}box-sizing:border-box;">${children}</div>`;
+    }
+
+    case 'ViewPager':
+    case 'ViewPager2':
+      return `<div style="background:#f5f5f5;min-height:80px;display:flex;align-items:center;justify-content:center;${baseStyle}"><span style="font-size:10px;color:#9e9e9e">[ ViewPager ]</span></div>`;
+
+    case 'RecyclerView':
+    case 'ListView':
+    case 'ExpandableListView': {
+      const items = ['Item One','Item Two','Item Three','Item Four','Item Five','Item Six'];
+      const numCols = parseInt(a('numColumns') || a('spanCount')) || 1;
+      const rvW = isMatch(w) ? 'width:100%;' : '';
+      const rvH = isMatch(h) ? 'min-height:120px;' : (dp(h) ? `height:${dpPx(h)};` : 'min-height:120px;');
+      if (numCols > 1) {
+        const gridItems = items.map((_,i) =>
+          `<div style="background:#f5f5f5;border-radius:6px;padding:8px;display:flex;flex-direction:column;align-items:center;gap:4px;">
+            <div style="width:36px;height:36px;border-radius:6px;background:#e0e0e0;"></div>
+            <div style="font-size:9px;color:#212121;font-weight:600;">Item ${i+1}</div>
+          </div>`).join('');
+        return `<div style="${baseStyle}display:grid;grid-template-columns:repeat(${numCols},1fr);gap:6px;${rvW}${rvH}${paddingStyle||'padding:6px;'}">${gridItems}</div>`;
+      }
+      const rows = items.map((item,i) =>
+        `<div style="display:flex;align-items:center;gap:10px;padding:9px 12px;border-bottom:1px solid #f0f0f0;background:#fff;">
+          <div style="width:34px;height:34px;border-radius:50%;background:hsl(${i*47},50%,80%);flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700;color:#fff;">${item[0]}</div>
+          <div style="flex:1;min-width:0;">
+            <div style="font-size:11px;font-weight:600;color:#212121;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${item}</div>
+            <div style="font-size:9px;color:#9e9e9e;margin-top:1px;">Subtitle description</div>
+          </div>
+          <div style="font-size:9px;color:#bdbdbd;">›</div>
+        </div>`
+      ).join('');
+      return `<div style="${baseStyle}${rvW}${rvH}overflow-y:auto;${bgStyle||'background:#fff;'}">${rows}</div>`;
+    }
+
+    case 'GridView': {
+      const cols = parseInt(a('numColumns')) || 2;
+      const items = Array.from({length: cols*2}, (_,i)=>`<div style="background:#e0e0e0;border-radius:4px;aspect-ratio:1;display:flex;align-items:center;justify-content:center;font-size:9px;color:#9e9e9e;">Item ${i+1}</div>`);
+      return `<div style="display:grid;grid-template-columns:repeat(${cols},1fr);gap:6px;${baseStyle}${paddingStyle}">${items.join('')}</div>`;
+    }
+
+    // ── Widget elements ────────────────────────────────
+
+    case 'TextView': {
+      const maxLines  = a('maxLines');
+      const maxLStyle = maxLines ? `overflow:hidden;display:-webkit-box;-webkit-line-clamp:${maxLines};-webkit-box-orient:vertical;` : '';
+      const allCaps   = a('textAllCaps') === 'true' ? 'text-transform:uppercase;' : '';
+      const tvW       = isMatch(w) ? 'width:100%;' : '';
+      const tvAlign   = gravS.includes('center') ? 'text-align:center;' : gravS.includes('right') ? 'text-align:right;' : '';
+      return `<div style="${baseStyle}display:block;${tvW}color:${textColor};font-size:${textSize};${fontW}${fontI}${allCaps}${maxLStyle}${tvAlign}${paddingStyle}line-height:1.45;">${textVal || ''}</div>`;
+    }
+
+    case 'Button':
+    case 'MaterialButton': {
+      const btnBg  = color(a('backgroundTint') || a('background')) || '#6200EE';
+      const btnTxt = color(a('textColor')) || '#FFFFFF';
+      const corner = dpPx(a('cornerRadius')) || '4px';
+      const style  = a('style') || '';
+      const btnW   = isMatch(w) ? 'width:100%;' : 'align-self:flex-start;';
+      const btnBase = `border-radius:${corner};padding:7px 16px;font-size:${textSize||'11px'};font-weight:700;letter-spacing:.5px;text-transform:uppercase;display:flex;align-items:center;justify-content:center;box-sizing:border-box;cursor:pointer;${btnW}`;
+      if (style.includes('Outlined')) {
+        return `<div style="${baseStyle}${btnBase}border:2px solid ${btnBg};color:${btnBg};background:transparent;">${textVal||'BUTTON'}</div>`;
+      }
+      if (style.includes('Text')) {
+        return `<div style="${baseStyle}${btnBase}background:transparent;color:${btnBg};padding:7px 8px;">${textVal||'BUTTON'}</div>`;
+      }
+      return `<div style="${baseStyle}${btnBase}background:${btnBg};color:${btnTxt};box-shadow:0 2px 6px rgba(0,0,0,.25);">${textVal||'BUTTON'}</div>`;
+    }
+
+    case 'ImageButton': {
+      const ibBg = color(a('backgroundTint')) || color(a('background')) || 'transparent';
+      return `<div style="${baseStyle}width:${dpPx(w)||'36px'};height:${dpPx(h)||'36px'};background:${ibBg};border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:14px;">🖼</div>`;
+    }
+
+    case 'EditText':
+    case 'TextInputEditText':
+    case 'AutoCompleteTextView':
+    case 'SearchView': {
+      const iType  = a('inputType') || '';
+      const isPass = iType.includes('password');
+      const isNum  = iType.includes('number') || iType.includes('phone');
+      const etW    = isMatch(w) ? '100%' : (dpPx(w) || '100%');
+      const uColor = color(a('backgroundTint') || a('tint')) || '#6200EE';
+      return `<div style="${baseStyle}width:${etW};box-sizing:border-box;">
+        ${hintVal||textVal ? `<div style="font-size:9px;color:${uColor};margin-bottom:1px;font-family:Roboto,sans-serif;">${hintVal||textVal}</div>` : ''}
+        <input type="${isPass?'password':isNum?'number':'text'}" placeholder="${hintVal||textVal||''}" readonly
+          style="width:100%;border:none;border-bottom:2px solid ${uColor};padding:5px 2px;font-size:${textSize||'12px'};color:${textColor};background:transparent;box-sizing:border-box;outline:none;font-family:Roboto,sans-serif;">
+      </div>`;
+    }
+
+    case 'TextInputLayout': {
+      const hint2    = txt(a('hint'));
+      const tilStyle = a('style') || '';
+      const isOutline = tilStyle.includes('OutlinedBox') || tilStyle.includes('Outlined');
+      const tilColor = color(a('boxStrokeColor') || a('hintTextColor')) || '#6200EE';
+      const tilW     = isMatch(w) ? 'width:100%;' : '';
+      const borderStyle = isOutline
+        ? `border:2px solid ${tilColor};border-radius:4px;padding:8px 12px;background:#fff;`
+        : `border-bottom:2px solid ${tilColor};padding:8px 2px;background:transparent;`;
+      return `<div style="${baseStyle}${tilW}box-sizing:border-box;">
+        ${hint2 ? `<div style="font-size:9px;color:${tilColor};margin-bottom:3px;font-family:Roboto,sans-serif;font-weight:500;">${hint2}</div>` : ''}
+        <div style="${borderStyle}">
+          ${children || `<input type="text" style="border:none;outline:none;width:100%;font-size:${textSize||'12px'};font-family:Roboto,sans-serif;background:transparent;" readonly placeholder="${hint2||''}">`}
+        </div>
+      </div>`;
+    }
+
+    case 'ImageView': {
+      const src    = a('src') || a('app:srcCompat') || a('srcCompat') || '';
+      const imgW   = isMatch(w) ? '100%' : (dpPx(w) || '100%');
+      const imgH   = dp(h) ? dpPx(h) : (isMatch(h) ? '80px' : '60px');
+      const iconSz = Math.max(16, Math.round(parseInt(imgH) * 0.45)) + 'px';
+      // Pick an emoji based on the drawable name
+      let icon = '🖼';
+      if (src.includes('ic_person') || src.includes('avatar') || src.includes('profile')) icon = '👤';
+      else if (src.includes('ic_home')) icon = '🏠';
+      else if (src.includes('ic_star') || src.includes('favorite')) icon = '⭐';
+      else if (src.includes('ic_add') || src.includes('ic_plus')) icon = '➕';
+      else if (src.includes('ic_search')) icon = '🔍';
+      else if (src.includes('ic_menu') || src.includes('ic_hamburger')) icon = '☰';
+      else if (src.includes('ic_back') || src.includes('ic_arrow')) icon = '←';
+      else if (src.includes('ic_settings')) icon = '⚙️';
+      else if (src.includes('ic_map') || src.includes('location')) icon = '📍';
+      else if (src.includes('ic_camera') || src.includes('photo')) icon = '📷';
+      else if (src.includes('ic_launcher') || src.includes('mipmap')) icon = '🤖';
+      const ibg = bg || (src ? '#f0f0f0' : '#e0e0e0');
+      return `<div style="${baseStyle}width:${imgW};height:${imgH};background:${ibg};display:flex;align-items:center;justify-content:center;border-radius:4px;overflow:hidden;font-size:${iconSz};flex-shrink:0;box-sizing:border-box;">${icon}</div>`;
+    }
+
+    case 'CardView':
+    case 'MaterialCardView': {
+      const radius = dpPx(a('cardCornerRadius') || a('cornerRadius')) || '8px';
+      const cardElev = dp(a('cardElevation') || a('elevation') || '2');
+      const shadow = `box-shadow:0 ${cardElev||2}px ${(cardElev||2)*2}px rgba(0,0,0,0.18);`;
+      const cardW = isMatch(w) ? 'width:100%;' : '';
+      return `<div style="${baseStyle}background:${bg||'#FFFFFF'};border-radius:${radius};${shadow}overflow:hidden;${cardW}${paddingStyle||'padding:8px;'}box-sizing:border-box;">${children}</div>`;
+    }
+
+    case 'Chip': {
+      const chipBg = color(a('chipBackgroundColor')) || '#E0E0E0';
+      return `<div style="display:inline-flex;align-items:center;gap:4px;background:${chipBg};border-radius:16px;padding:4px 10px;font-size:10px;color:${textColor};${marginStyle}">
+        ${a('chipIcon')||a('app:chipIcon')?'🔵':''} ${textVal||'Chip'}
+      </div>`;
+    }
+
+    case 'FloatingActionButton':
+    case 'ExtendedFloatingActionButton': {
+      const fabBg = color(a('backgroundTint') || a('app:backgroundTint')) || '#6200EE';
+      const isExt = tag === 'ExtendedFloatingActionButton';
+      if (isExt) {
+        return `<div style="display:inline-flex;align-items:center;gap:6px;background:${fabBg};color:#fff;border-radius:16px;padding:8px 16px;font-size:11px;font-weight:600;box-shadow:0 4px 8px rgba(0,0,0,.3);${baseStyle}">
+          ➕ ${textVal||'Add'}
+        </div>`;
+      }
+      return `<div style="width:40px;height:40px;border-radius:50%;background:${fabBg};display:flex;align-items:center;justify-content:center;color:#fff;font-size:20px;font-weight:bold;box-shadow:0 4px 8px rgba(0,0,0,.3);${baseStyle}">+</div>`;
+    }
+
+    case 'Toolbar':
+    case 'MaterialToolbar': {
+      const titl  = txt(a('title')) || project.name;
+      const sub   = txt(a('subtitle'));
+      const tBg   = bg || '#6200EE';
+      const tColor= color(a('titleTextColor')) || '#FFFFFF';
+      return `<div style="background:${tBg};padding:10px 14px;display:flex;align-items:center;gap:10px;${marginStyle}">
+        <span style="color:${tColor};font-size:16px;">☰</span>
+        <div>
+          <div style="color:${tColor};font-size:13px;font-weight:600;">${titl}</div>
+          ${sub?`<div style="color:${tColor};opacity:.75;font-size:10px;">${sub}</div>`:''}
+        </div>
+      </div>`;
+    }
+
+    case 'TabLayout': {
+      const tabs = Array.from(el.querySelectorAll('TabItem'));
+      const tBg  = bg || '#6200EE';
+      const tabItems = tabs.length
+        ? tabs.map((t,i)=>`<div style="flex:1;text-align:center;padding:8px 6px;font-size:10px;font-weight:600;color:${i===0?'#FFF':'rgba(255,255,255,.6)'};border-bottom:${i===0?'2px solid #03DAC5':'2px solid transparent'};">${txt(getAttr(t,'text'))||'Tab '+(i+1)}</div>`)
+        : ['Home','Feed','Profile'].map((t,i)=>`<div style="flex:1;text-align:center;padding:8px 6px;font-size:10px;font-weight:600;color:${i===0?'#FFF':'rgba(255,255,255,.6)'};border-bottom:${i===0?'2px solid #03DAC5':'2px solid transparent'};">${t}</div>`);
+      return `<div style="background:${tBg};display:flex;${marginStyle}">${tabItems.join('')}</div>`;
+    }
+
+    case 'BottomNavigationView': {
+      const items2 = ['Home','Search','Profile','Settings'].slice(0,4);
+      const navBg  = bg || '#FFFFFF';
+      return `<div style="background:${navBg};border-top:1px solid #e0e0e0;display:flex;${marginStyle}">
+        ${items2.map((item,i)=>`<div style="flex:1;padding:8px 4px;text-align:center;">
+          <div style="font-size:16px;">${['🏠','🔍','👤','⚙️'][i]}</div>
+          <div style="font-size:8px;color:${i===0?'#6200EE':'#757575'};">${item}</div>
+        </div>`).join('')}
+      </div>`;
+    }
+
+    case 'NavigationView':
+      return `<div style="width:200px;background:${bg||'#FFFFFF'};border-right:1px solid #e0e0e0;padding:8px 0;${marginStyle}">
+        <div style="padding:16px;background:#6200EE;color:#fff;font-size:12px;font-weight:600;margin-bottom:8px;">${project.name}</div>
+        ${['Home','Profile','Settings','About'].map(i=>`<div style="padding:10px 16px;font-size:11px;color:#212121;display:flex;gap:8px;">• ${i}</div>`).join('')}
+      </div>`;
+
+    case 'DrawerLayout':
+      return `<div style="position:relative;overflow:hidden;${baseStyle}">${children}</div>`;
+
+    case 'CheckBox': {
+      const isChecked = a('checked') === 'true';
+      const cbColor   = color(a('buttonTint')) || '#6200EE';
+      return `<div style="display:flex;align-items:center;gap:8px;${baseStyle}${paddingStyle}">
+        <div style="width:16px;height:16px;border-radius:3px;border:2px solid ${cbColor};background:${isChecked?cbColor:'transparent'};display:flex;align-items:center;justify-content:center;flex-shrink:0;">
+          ${isChecked?`<span style="color:#fff;font-size:10px;line-height:1;">✓</span>`:''}
+        </div>
+        <span style="font-size:${textSize};color:${textColor};">${textVal}</span>
+      </div>`;
+    }
+
+    case 'RadioButton': {
+      const isChecked = a('checked') === 'true';
+      const rbColor   = color(a('buttonTint')) || '#6200EE';
+      return `<div style="display:flex;align-items:center;gap:8px;${baseStyle}${paddingStyle}">
+        <div style="width:16px;height:16px;border-radius:50%;border:2px solid ${rbColor};display:flex;align-items:center;justify-content:center;flex-shrink:0;">
+          ${isChecked?`<div style="width:8px;height:8px;border-radius:50%;background:${rbColor};"></div>`:''}
+        </div>
+        <span style="font-size:${textSize};color:${textColor};">${textVal}</span>
+      </div>`;
+    }
+
+    case 'Switch':
+    case 'SwitchMaterial':
+    case 'SwitchCompat': {
+      const isOn    = a('checked') === 'true';
+      const swColor = color(a('thumbTint') || a('trackTint')) || '#6200EE';
+      return `<div style="display:flex;align-items:center;gap:10px;justify-content:space-between;${baseStyle}${paddingStyle}">
+        <span style="font-size:${textSize};color:${textColor};">${textVal}</span>
+        <div style="width:36px;height:20px;border-radius:10px;background:${isOn?swColor:'#ccc'};position:relative;flex-shrink:0;">
+          <div style="width:14px;height:14px;border-radius:50%;background:#fff;position:absolute;top:3px;${isOn?'right:3px':'left:3px'};box-shadow:0 1px 3px rgba(0,0,0,.3);"></div>
+        </div>
+      </div>`;
+    }
+
+    case 'RatingBar': {
+      const numStars = parseInt(a('numStars')) || 5;
+      const rating   = parseFloat(a('rating')) || 3;
+      const stars    = Array.from({length:numStars},(_,i)=>`<span style="color:${i<rating?'#FFC107':'#E0E0E0'};font-size:14px;">★</span>`);
+      return `<div style="display:flex;${baseStyle}">${stars.join('')}</div>`;
+    }
+
+    case 'ProgressBar': {
+      const isHoriz = a('style') && a('style').toLowerCase().includes('horizontal');
+      const max2    = parseFloat(a('max')) || 100;
+      const prog2   = parseFloat(a('progress')) || 0;
+      const pct2    = Math.min(100, (prog2/max2)*100);
+      const pbColor = color(a('progressTint')) || color(a('indeterminateTint')) || '#6200EE';
+      if (!isHoriz && !a('progress')) {
+        // Indeterminate circular
+        return `<div style="width:${dpPx(w)||'32px'};height:${dpPx(h)||'32px'};border-radius:50%;border:3px solid #e0e0e0;border-top-color:${pbColor};${baseStyle}${lgravS}animation:spin .8s linear infinite;"></div>`;
+      }
+      return `<div style="height:4px;background:#e0e0e0;border-radius:2px;overflow:hidden;${baseStyle}">
+        <div style="width:${pct2}%;height:100%;background:${pbColor};border-radius:2px;"></div>
+      </div>`;
+    }
+
+    case 'SeekBar': {
+      const max3  = parseFloat(a('max')) || 100;
+      const prog3 = parseFloat(a('progress')) || 50;
+      const pct3  = Math.min(100, (prog3/max3)*100);
+      const sbColor = color(a('progressTint')) || '#6200EE';
+      return `<div style="padding:8px 0;${baseStyle}">
+        <div style="position:relative;height:4px;background:#e0e0e0;border-radius:2px;">
+          <div style="width:${pct3}%;height:100%;background:${sbColor};border-radius:2px;position:relative;">
+            <div style="width:14px;height:14px;border-radius:50%;background:${sbColor};position:absolute;right:-7px;top:-5px;box-shadow:0 1px 4px rgba(0,0,0,.3);"></div>
+          </div>
+        </div>
+      </div>`;
+    }
+
+    case 'View':
+      return `<div style="height:${dpPx(h)||'1px'};background:${bg||'#e0e0e0'};${wStyle}${marginStyle}"></div>`;
+
+    case 'Space':
+      return `<div style="${wStyle}${hStyle}${marginStyle}"></div>`;
+
+    case 'Divider':
+      return `<div style="height:1px;background:${bg||'#e0e0e0'};width:100%;${marginStyle}"></div>`;
+
+    case 'include': {
+      const layout = a('layout');
+      const layoutName = layout ? layout.replace('@layout/','') : '';
+      const includedKey = Object.keys(project.files).find(f => f.includes(layoutName) && f.endsWith('.xml'));
+      if (includedKey && includedKey !== activeFile) {
+        return renderXMLLayout(project.files[includedKey], colorsSrc, strSrc);
+      }
+      return `<div style="background:#f5f5f5;padding:6px;font-size:9px;color:#9e9e9e;border:1px dashed #ccc;${baseStyle}">📐 ${layoutName||'included layout'}</div>`;
+    }
+
+    case 'fragment':
+    case 'androidx.fragment.app.FragmentContainerView':
+      return `<div style="background:#f0f4ff;padding:12px;font-size:10px;color:#6200EE;border:1px dashed #b3c5ff;min-height:60px;display:flex;align-items:center;justify-content:center;${baseStyle}">⬡ Fragment</div>`;
+
+    case 'WebView':
+      return `<div style="background:#fff;border:1px solid #e0e0e0;display:flex;align-items:center;justify-content:center;min-height:60px;font-size:10px;color:#9e9e9e;${baseStyle}">🌐 WebView</div>`;
+
+    case 'SurfaceView':
+    case 'TextureView':
+      return `<div style="background:#000;display:flex;align-items:center;justify-content:center;min-height:80px;font-size:10px;color:#666;${baseStyle}">▶ ${tag}</div>`;
+
+    case 'MapView':
+    case 'SupportMapFragment':
+      return `<div style="background:#e8f5e9;border:1px solid #c8e6c9;display:flex;align-items:center;justify-content:center;min-height:80px;font-size:20px;${baseStyle}">🗺</div>`;
+
+    default: {
+      // Unknown/custom tag: try to render sensibly
+      const defW = isMatch(w) ? 'width:100%;' : '';
+      if (children) return `<div style="${defW}${hStyle}${marginStyle}${bgStyle}${paddingStyle}box-sizing:border-box;">${children}</div>`;
+      if (textVal)  return `<div style="display:block;${defW}font-size:${textSize};color:${textColor};${marginStyle}${paddingStyle}">${textVal}</div>`;
+      if (bgStyle)  return `<div style="${defW}${hStyle||'height:40px;'}${marginStyle}${bgStyle}"></div>`;
+      return '';
+    }
+  }
+}
+
+// ═══════════════════════════
+//  BUILD
+// ═══════════════════════════
+async function buildAPK(release=false) {
+  await detectBackend();
+  if (backendAvailable && !release) {
+    return buildAPKBackend();
+  }
+  if (backendAvailable && release) {
+    showNotif('warn','Release Build','Backend release build not configured. Using simulated build.');
+  }
+  closeAllMenus({target:document.body});
+  const overlay=document.getElementById('build-overlay');
+  const fill=document.getElementById('build-progress-fill');
+  const step=document.getElementById('build-step');
+  const dlSection=document.getElementById('download-section');
+  const initSection=document.getElementById('build-actions-initial');
+  document.getElementById('build-icon').textContent='🔨';
+  document.getElementById('build-title').textContent=release?'Building Release APK...':'Building Debug APK...';
+  document.getElementById('build-subtitle').textContent=`Running Gradle ${release?'assembleRelease':'assembleDebug'}`;
+  overlay.classList.add('show'); fill.style.width='0%'; dlSection.style.display='none'; initSection.style.display='block';
+  clearConsole();
+  const steps=[
+    [5,'Initializing Gradle build daemon...'],[10,'Configuring project :app'],
+    [18,'Checking Android SDK tools...'],[24,':app:preBuild UP-TO-DATE'],
+    [30,':app:preDebugBuild UP-TO-DATE'],[38,`:app:compile${release?'Release':'Debug'}JavaWithJavac`],
+    [46,`:app:process${release?'Release':'Debug'}Resources`],[54,`:app:merge${release?'Release':'Debug'}Resources`],
+    [60,':app:packageDebugResources'],[66,':app:createDebugCompatibleScreenManifests'],
+    [72,`:app:process${release?'Release':'Debug'}Manifest`],[80,':app:mergeDebugJniLibFolders'],
+    [87,':app:packageDebug'],[94,`:app:assemble${release?'Release':'Debug'}`],
+    [100,'BUILD SUCCESSFUL in 3s']
+  ];
+  for(const [pct,msg]of steps){
+    await delay(160+Math.random()*120); fill.style.width=pct+'%'; step.textContent=msg;
+    logToConsole(msg,pct===100?'success':'info');
+  }
+  await delay(300);
+  document.getElementById('build-icon').textContent='✅';
+  document.getElementById('build-title').textContent='Build Successful!';
+  document.getElementById('build-subtitle').textContent='1 actionable task: 1 executed';
+  const apkName=`${project.name.replace(/\s+/g,'')}-${release?'release':'debug'}.apk`;
+  const size=(1.8+Math.random()*1.8).toFixed(1);
+  document.getElementById('apk-name').textContent=apkName;
+  document.getElementById('apk-meta').textContent=`${size} MB · ${release?'release':'debug'} · arm64-v8a,x86_64`;
+  dlSection.style.display='block'; initSection.style.display='none';
+  logToConsole(`APK: ${apkName} (${size} MB)`,'success');
+  showNotif('success','Build Successful',`${apkName} — ${size} MB`);
+}
+function buildRelease(){buildAPK(true);}
+async function buildAPKBackend(){
+  closeAllMenus({target:document.body});
+  const overlay=document.getElementById('build-overlay');
+  const fill=document.getElementById('build-progress-fill');
+  const step=document.getElementById('build-step');
+  const dlSection=document.getElementById('download-section');
+  const initSection=document.getElementById('build-actions-initial');
+  document.getElementById('build-icon').textContent='🔨';
+  document.getElementById('build-title').textContent='Building Debug APK...';
+  document.getElementById('build-subtitle').textContent='Running Gradle assembleDebug (backend)';
+  overlay.classList.add('show'); fill.style.width='8%'; dlSection.style.display='none'; initSection.style.display='block';
+  clearConsole();
+  logToConsole('Starting Gradle build via backend...','info');
+  try {
+    await syncProjectToBackend({ silent: true });
+    const res = await fetch(API_BASE + '/api/build', {method:'POST'});
+    if (!res.ok) throw new Error(await res.text());
+    const data = await res.json();
+    const buildId = data.buildId;
+    lastBuildArtifactPath = '';
+    let pct = 12;
+    const iv = setInterval(()=>{pct=Math.min(92,pct+3); fill.style.width=pct+'%';},600);
+    const es = new EventSource(API_BASE + `/api/build/${buildId}/stream`);
+    es.onmessage = e => {
+      const chunk = JSON.parse(e.data || '\"\"');
+      if (chunk) {
+        const lines = chunk.split('\n').filter(Boolean);
+        lines.forEach(line=>logToConsole(line,'info'));
+        step.textContent = lines[lines.length-1] || step.textContent;
+      }
+    };
+    es.addEventListener('done', e => {
+      clearInterval(iv);
+      const status = JSON.parse(e.data || '\"failed\"');
+      fill.style.width='100%';
+      es.close();
+      fetch(API_BASE + `/api/build/${buildId}`)
+        .then(r => r.ok ? r.json() : Promise.reject(new Error('Unable to fetch build summary')))
+        .then(summary => {
+          if (status === 'success') {
+            lastBuildArtifactPath = summary.artifactPath || '';
+            document.getElementById('build-icon').textContent='✅';
+            document.getElementById('build-title').textContent='Build Successful!';
+            document.getElementById('build-subtitle').textContent='Backend build finished';
+            document.getElementById('apk-name').textContent = lastBuildArtifactPath ? lastBuildArtifactPath.split('/').pop() : `${project.name.replace(/\s+/g,'')}-debug.apk`;
+            document.getElementById('apk-meta').textContent = 'Real APK generated by Gradle';
+            dlSection.style.display='block';
+            initSection.style.display='none';
+            showNotif('success','Build Successful','APK built via backend');
+          } else {
+            document.getElementById('build-icon').textContent='❌';
+            document.getElementById('build-title').textContent='Build Failed';
+            document.getElementById('build-subtitle').textContent='Check build log for details';
+            showError('Build failed — check console log');
+            if (summary.logs) logToConsole(summary.logs,'error');
+            logToConsole('BUILD FAILED','error');
+          }
+        })
+        .catch(err => {
+          showError('Build summary failed: ' + (err.message || 'unknown error'));
+          logToConsole('Build summary failed: ' + (err.message || 'unknown error'),'error');
+        });
+    });
+  } catch (err) {
+    document.getElementById('build-icon').textContent='❌';
+    document.getElementById('build-title').textContent='Build Failed';
+    document.getElementById('build-subtitle').textContent='Backend not reachable';
+    showError('Backend build failed: ' + (err.message||'unknown error'));
+    logToConsole('Backend build failed: ' + (err.message||'unknown error'),'error');
+  }
+}
+async function cleanProject(){
+  closeAllMenus({target:document.body});
+  logToConsole('> Task :app:clean','info');
+  await delay(600);
+  logToConsole('> Task :clean','info');
+  await delay(400);
+  logToConsole('BUILD SUCCESSFUL — cleaned build directory','success');
+  showToast('🧹 Project cleaned');
+}
+function closeBuildModal(){document.getElementById('build-overlay').classList.remove('show');}
+function downloadAPK(){
+  if (lastBuildArtifactPath) {
+    const a = document.createElement('a');
+    a.href = lastBuildArtifactPath;
+    a.download = document.getElementById('apk-name').textContent || '';
+    a.style.display = 'none';
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => {
+      document.body.removeChild(a);
+    }, 1000);
+    showToast('⬇ Downloading real APK');
+    logToConsole('APK download started: ' + lastBuildArtifactPath, 'success');
+    closeBuildModal();
+    return;
+  }
+  try {
+    const apkName = document.getElementById('apk-name').textContent || (project.name.replace(/\s+/g,'')+'-debug.apk');
+
+    // Build a rich manifest of the project contents
+    const lines = [];
+    lines.push('================================================================');
+    lines.push('  ANDROIDBOX SIMULATED APK PACKAGE');
+    lines.push('================================================================');
+    lines.push('Package    : ' + project.package);
+    lines.push('App Name   : ' + project.name);
+    lines.push('Version    : 1.0 (versionCode 1)');
+    lines.push('MinSdk     : ' + (project.minSdk||29));
+    lines.push('TargetSdk  : 33');
+    lines.push('Language   : ' + (project.language||'java').toUpperCase());
+    lines.push('BuildTool  : AndroidBox v2.0');
+    lines.push('BuildType  : ' + (apkName.includes('release')?'release':'debug'));
+    lines.push('Built At   : ' + new Date().toISOString());
+    lines.push('');
+    lines.push('----------------------------------------------------------------');
+    lines.push('  PROJECT FILES');
+    lines.push('----------------------------------------------------------------');
+    Object.entries(project.files).forEach(([k,v]) => {
+      lines.push('');
+      lines.push('>>> ' + k + ' <<<');
+      lines.push(v || '(empty)');
+    });
+    lines.push('');
+    lines.push('================================================================');
+    lines.push('  NOTE: Real APK not available for this build session.');
+    lines.push('  This export contains project contents only.');
+    lines.push('================================================================');
+
+    const content = lines.join('\n');
+    const blob = new Blob([content], { type: 'application/octet-stream' });
+    const url = URL.createObjectURL(blob);
+
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = apkName;
+    a.style.display = 'none';
+    document.body.appendChild(a);
+    a.click();
+
+    // Revoke after a delay so the browser can start the download
+    setTimeout(() => {
+      URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+    }, 2000);
+
+    showToast('⬇ Downloading ' + apkName);
+    logToConsole('APK download started: ' + apkName, 'success');
+    closeBuildModal();
+
+  } catch(err) {
+    console.error('Download error:', err);
+    showToast('⚠ Download failed — try again');
+    logToConsole('Download error: ' + err.message, 'error');
+  }
+}
+
+// ═══════════════════════════
+//  SETTINGS
+// ═══════════════════════════
+let currentSettingsTab='editor';
+function showSettings(){
+  closeAllMenus({target:document.body});
+  document.getElementById('settings-overlay').classList.add('show');
+  renderSettingsContent();
+}
+function closeSettings(){document.getElementById('settings-overlay').classList.remove('show');}
+function switchSettingsTab(tab){
+  currentSettingsTab=tab;
+  document.querySelectorAll('.settings-nav-item').forEach((el,i)=>{el.classList.toggle('active',['editor','theme','build','sync','keybindings'][i]===tab)});
+  renderSettingsContent();
+}
+function renderSettingsContent(){
+  const el=document.getElementById('settings-content');
+  const toggle=(key,label,desc)=>`<div class="setting-item"><div><div class="setting-label">${label}</div><div class="setting-desc">${desc}</div></div><div class="setting-right"><div class="toggle ${settings[key]?'on':''}" onclick="toggleSetting('${key}')"></div></div></div>`;
+  const sel=(key,label,opts)=>`<div class="setting-item"><div class="setting-label">${label}</div><div class="setting-right"><select class="setting-select" onchange="changeSetting('${key}',this.value)">${opts.map(([v,t])=>`<option value="${v}" ${settings[key]==v?'selected':''}>${t}</option>`).join('')}</select></div></div>`;
+  if(currentSettingsTab==='editor'){
+    el.innerHTML=`<div class="settings-section"><div class="settings-section-title">Editor</div>
+      ${toggle('autoSave','Auto Save','Automatically save files after changes')}
+      ${toggle('minimap','Minimap','Show code overview minimap')}
+      ${toggle('wordWrap','Word Wrap','Wrap long lines')}
+      ${toggle('autoFormat','Format on Save','Auto-format code when saving')}
+      ${sel('fontSize','Font Size',[[11,'11px'],[12,'12px'],[13,'13px'],[14,'14px'],[15,'15px'],[16,'16px']])}
+      ${sel('tabSize','Tab Size',[[2,'2 spaces'],[4,'4 spaces'],[8,'8 spaces']])}
+    </div>`;
+  } else if(currentSettingsTab==='theme'){
+    el.innerHTML=`<div class="settings-section"><div class="settings-section-title">Appearance</div>
+      ${sel('editorTheme','Editor Theme',[['vs-dark','Dark (VS Dark)'],['vs','Light (VS)'],['hc-black','High Contrast']])}
+      ${toggle('theme','UI Dark Mode','Use dark theme for the IDE')}
+      <div style="margin-top:12px;font-size:11px;color:var(--text-secondary)">Changes take effect on next file open</div>
+    </div>`;
+  } else if(currentSettingsTab==='build'){
+    el.innerHTML=`<div class="settings-section"><div class="settings-section-title">Build</div>
+      ${toggle('syncGradle','Auto-sync Gradle','Sync project on file changes')}
+      ${sel('buildType','Default Build Type',[['debug','Debug'],['release','Release']])}
+      ${sel('minSdk','Default Min SDK',[[21,'API 21'],[24,'API 24'],[26,'API 26'],[29,'API 29'],[33,'API 33']])}
+    </div>`;
+  } else if(currentSettingsTab==='sync'){
+    el.innerHTML=`<div class="settings-section"><div class="settings-section-title">Sync & Storage</div>
+      ${toggle('autoSave','Auto-save to Memory','Keeps files in browser memory')}
+      ${sel('autoSaveDelay','Auto-save Delay',[[1000,'1 second'],[2000,'2 seconds'],[5000,'5 seconds']])}
+      <div class="setting-item" style="margin-top:8px"><div><div class="setting-label">Export Project</div><div class="setting-desc">Save entire project as JSON file</div></div><div class="setting-right"><button class="btn btn-sm" onclick="saveProject()">Export</button></div></div>
+      <div class="setting-item"><div><div class="setting-label">Import Project</div><div class="setting-desc">Load previously exported project</div></div><div class="setting-right"><button class="btn btn-sm" onclick="importProject()">Import</button></div></div>
+      <div class="setting-item"><div><div class="setting-label">Clear Recent Projects</div><div class="setting-desc">Remove recent project history</div></div><div class="setting-right"><button class="btn btn-sm btn-red" onclick="clearRecent()">Clear</button></div></div>
+    </div>`;
+  } else if(currentSettingsTab==='keybindings'){
+    el.innerHTML=`<div class="settings-section"><div class="settings-section-title">Keyboard Shortcuts</div>
+      ${[['Ctrl+N','New Project'],['Ctrl+O','Open Folder'],['Ctrl+S','Save'],['Ctrl+Shift+S','Save All'],['Ctrl+B','Build APK'],['Ctrl+Enter','Run Preview'],['Ctrl+F','Find'],['Ctrl+H','Find & Replace'],['Ctrl+Shift+F','Find in Files'],['Ctrl+\\','Split Editor'],['Ctrl+/','Toggle Comment'],['Shift+Alt+F','Format Document'],['Ctrl+`','Toggle Console'],['Ctrl+,','Settings'],['Ctrl+Z','Undo'],['Ctrl+Y','Redo']].map(([k,v])=>`<div class="setting-item"><div class="setting-label">${v}</div><div class="setting-right"><code style="background:var(--bg-active);padding:3px 7px;border-radius:4px;font-family:var(--font-mono);font-size:11px">${k}</code></div></div>`).join('')}
+    </div>`;
+  }
+}
+function toggleSetting(key){settings[key]=!settings[key];saveSettings();renderSettingsContent();}
+function changeSetting(key,val){settings[key]=isNaN(val)?val:parseInt(val)||val;saveSettings();if(key==='editorTheme'&&monacoEditor)monaco.editor.setTheme(val);if(key==='fontSize'&&monacoEditor)monacoEditor.updateOptions({fontSize:parseInt(val)});renderSettingsContent();}
+function saveSettings(){try{localStorage.setItem('ab_settings',JSON.stringify(settings));}catch(e){}}
+function clearRecent(){recentProjects=[];try{localStorage.removeItem('ab_recent');}catch(e){}showToast('Recent projects cleared');}
+document.getElementById('settings-overlay').addEventListener('click',e=>{if(e.target.id==='settings-overlay')closeSettings();});
+
+// ═══════════════════════════
+//  PROJECT MANAGEMENT
+// ═══════════════════════════
+function showNewProject(){document.getElementById('new-project-overlay').classList.add('show');closeAllMenus({target:document.body});}
+function closeNewProject(){document.getElementById('new-project-overlay').classList.remove('show');}
+function selectTemplate(el){document.querySelectorAll('.template-card').forEach(c=>c.classList.remove('selected'));el.classList.add('selected');selectedTemplate=el.dataset.template;}
+
+function createProject(){
+  const appName=document.getElementById('np-app-name').value.trim()||'MyAndroidApp';
+  const pkg=document.getElementById('np-package').value.trim()||'com.example.myapp';
+  const lang=document.getElementById('np-language').value;
+  const minSdk=parseInt(document.getElementById('np-minsdk').value);
+  project.name=appName; project.package=pkg; project.language=lang; project.minSdk=minSdk;
+  project.files=getTemplateFiles(selectedTemplate,appName,pkg,lang);
+  project.modifiedFiles=new Set();
+  document.getElementById('project-name-display').textContent=appName+' ▾';
+  openTabs.length=0; activeFile=null;
+  buildFileTree(); clearConsole();
+  const mainFile=Object.keys(project.files).find(f=>f.endsWith('.java')||f.endsWith('.kt'));
+  if(mainFile)openFile(mainFile);
+  setTimeout(()=>{
+    const xmlFile=Object.keys(project.files).find(f=>f.includes('layout')&&f.endsWith('.xml'));
+    if(xmlFile){openFile(xmlFile);if(mainFile)openFile(mainFile);}
+    refreshPreview();
+  },300);
+  addToRecent(appName); updateSyncBadge('synced');
+  logToConsole(`Project "${appName}" created | ${lang.toUpperCase()} | API ${minSdk}`,'success');
+  logToConsole(`Package: ${pkg}`,'info');
+  closeNewProject(); showToast(`🚀 "${appName}" created!`);
+}
+
+function saveProject(){
+  if(activeFile&&monacoEditor)project.files[activeFile]=monacoEditor.getValue();
+  const data=JSON.stringify({version:2,project:{name:project.name,package:project.package,language:project.language,minSdk:project.minSdk,branch:project.branch},files:project.files},null,2);
+  const blob=new Blob([data],{type:'application/json'});
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement('a');a.href=url;a.download=`${project.name}-androidbox.json`;a.click();URL.revokeObjectURL(url);
+  showToast('📦 Project exported!'); logToConsole('Project exported as JSON','success');
+  closeAllMenus({target:document.body});
+}
+
+function importProject(){
+  closeAllMenus({target:document.body});
+  const inp = document.getElementById('project-json-input');
+  inp.value = '';
+  inp.click();
+}
+function importProjectFile(event){
+  const file = event.target.files[0];
+  event.target.value = '';   // reset immediately
+  if (!file) return;
+
+  showToast('📦 Importing project...');
+  const r = new FileReader();
+  r.onerror = () => showToast('⚠ Could not read file');
+  r.onload = e => {
+    try {
+      const data = JSON.parse(e.target.result);
+      if (!data.files || typeof data.files !== 'object') {
+        showToast('⚠ Invalid AndroidBox project file'); return;
+      }
+      // Restore project metadata
+      if (data.project) Object.assign(project, data.project);
+      project.files = data.files;
+      project.modifiedFiles = new Set();
+
+      document.getElementById('project-name-display').textContent = (project.name || 'Imported') + ' ▾';
+      openTabs.length = 0;
+      activeFile = null;
+      buildFileTree();
+      clearConsole();
+
+      const firstSrc = Object.keys(project.files).find(f => f.endsWith('.java') || f.endsWith('.kt'));
+      const firstXml = Object.keys(project.files).find(f => f.includes('layout') && f.endsWith('.xml'));
+      if (firstSrc) openFile(firstSrc);
+      setTimeout(() => {
+        if (firstXml) openFile(firstXml);
+        if (firstSrc) openFile(firstSrc);
+        refreshPreview();
+      }, 300);
+
+      addToRecent(project.name);
+      updateSyncBadge('synced');
+      logToConsole(`Project "${project.name}" imported from JSON — ${Object.keys(project.files).length} files`, 'success');
+      showNotif('success', 'Project Imported', `${Object.keys(project.files).length} files loaded`);
+      closeOpenFolder();
+    } catch(err) {
+      console.error('Import error:', err);
+      showToast('⚠ Invalid or corrupted project file');
+    }
+  };
+  r.readAsText(file);
+}
+
+function addFile(){
+  const n=prompt('New file name (e.g., SecondActivity.java):');
+  if(!n)return;
+  const ext=n.split('.').pop();
+  const pkgPath=project.package.replace(/\./g,'/');
+  let content='',path;
+  if(ext==='java'){content=`package ${project.package};\n\nimport androidx.appcompat.app.AppCompatActivity;\nimport android.os.Bundle;\n\npublic class ${n.replace('.java','')} extends AppCompatActivity {\n    @Override\n    protected void onCreate(Bundle savedInstanceState) {\n        super.onCreate(savedInstanceState);\n    }\n}`;path=`app/java/${pkgPath}/${n}`;}
+  else if(ext==='kt'){content=`package ${project.package}\n\nimport androidx.appcompat.app.AppCompatActivity\nimport android.os.Bundle\n\nclass ${n.replace('.kt','')} : AppCompatActivity() {\n    override fun onCreate(savedInstanceState: Bundle?) {\n        super.onCreate(savedInstanceState)\n    }\n}`;path=`app/java/${pkgPath}/${n}`;}
+  else if(ext==='xml'){content=`<?xml version="1.0" encoding="utf-8"?>\n<LinearLayout\n    xmlns:android="http://schemas.android.com/apk/res/android"\n    android:layout_width="match_parent"\n    android:layout_height="match_parent"\n    android:orientation="vertical">\n\n    <TextView\n        android:layout_width="wrap_content"\n        android:layout_height="wrap_content"\n        android:text="New Layout"/>\n\n</LinearLayout>`;path=`app/res/layout/${n}`;}
+  else{path=`app/${n}`;}
+  project.files[path]=content; buildFileTree(); openFile(path);
+  showToast(`📄 Created: ${n}`); closeAllMenus({target:document.body});
+}
+
+function addFolder(){const n=prompt('Folder name:');if(!n)return;project.files[`app/${n}/.gitkeep`]='';buildFileTree();}
+
+// Generate code (AI stub)
+function generateCode(){
+  const type=prompt('What to generate? (e.g., "Activity", "RecyclerView Adapter", "ViewModel", "Repository"):');
+  if(!type)return;
+  const pkgPath=project.package.replace(/\./g,'/');
+  const name=type.replace(/\s+/g,'');
+  const code=`package ${project.package};\n\n// Generated: ${name}\n// TODO: Implement ${type} functionality\n\npublic class ${name} {\n    \n    // Constructor\n    public ${name}() {\n        // Initialize\n    }\n    \n}`;
+  project.files[`app/java/${pkgPath}/${name}.java`]=code;
+  buildFileTree(); openFile(`app/java/${pkgPath}/${name}.java`);
+  showToast(`🤖 Generated: ${name}.java`);
+  closeAllMenus({target:document.body});
+}
+
+function formatCode(){if(monacoEditor)monacoEditor.trigger('','editor.action.formatDocument');closeAllMenus({target:document.body});}
+function toggleComment(){if(monacoEditor)monacoEditor.trigger('','editor.action.commentLine');closeAllMenus({target:document.body});}
+function runPreview(){if(activeFile&&monacoEditor)project.files[activeFile]=monacoEditor.getValue();refreshPreview();showToast('▶ Preview updated!');logToConsole('Layout preview refreshed','success');closeAllMenus({target:document.body});}
+
+async function refreshDevices(){
+  await detectBackend();
+  const sel = document.getElementById('device-select');
+  if (!backendAvailable) {
+    showError('Backend not running. Start BrainBox backend first.');
+    return;
+  }
+  try {
+    const res = await fetch(API_BASE + '/api/devices');
+    if (!res.ok) throw new Error('Unable to fetch devices');
+    const data = await res.json();
+    const devices = data.devices || [];
+    if (sel) {
+      sel.innerHTML = '';
+      if (!devices.length) {
+        const opt = document.createElement('option');
+        opt.value = '';
+        opt.textContent = 'No devices';
+        sel.appendChild(opt);
+        logToConsole('No adb devices detected. Connect a phone with USB debugging enabled.','warn');
+      } else {
+        devices.forEach(d=>{
+          const opt = document.createElement('option');
+          opt.value = d.id;
+          opt.textContent = `${d.id} (${d.state})`;
+          sel.appendChild(opt);
+        });
+      }
+    }
+    logToConsole(`Devices: ${devices.length}`,'info');
+  } catch (e) {
+    showError('Device refresh failed: ' + (e.message||'unknown error'));
+    logToConsole('Device refresh failed','error');
+  }
+}
+
+async function runOnDevice(){
+  closeAllMenus({target:document.body});
+  await detectBackend();
+  if (!backendAvailable) {
+    showError('Backend not running. Start BrainBox backend first.');
+    return;
+  }
+  const sel = document.getElementById('device-select');
+  const deviceId = sel && sel.value ? sel.value : null;
+  if (!deviceId) {
+    showError('No adb device selected. Connect a phone or start an emulator first.');
+    logToConsole('Run skipped: no adb device selected.','warn');
+    return;
+  }
+  logToConsole('Running app on device...','info');
+  try {
+    await syncProjectToBackend({ silent: true });
+    const res = await fetch(API_BASE + '/api/run', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ deviceId })
+    });
+    const text = await res.text();
+    let data = {};
+    try { data = text ? JSON.parse(text) : {}; } catch { data = { raw:text }; }
+    if (!res.ok) throw new Error(data.error || 'Run failed');
+    showNotif('success','Run Successful','App installed and launched');
+    logToConsole('App installed and launched','success');
+    if (data.logs) logToConsole(data.logs,'info');
+  } catch (e) {
+    showError('Run failed: ' + (e.message||'unknown error'));
+    logToConsole('Run failed: ' + (e.message||'unknown error'),'error');
+  }
+}
+
+// ═══════════════════════════
+//  DEFAULT PROJECT
+// ═══════════════════════════
+function getDefaultFiles(appName,pkg,lang){
+  const pkgPath=pkg.replace(/\./g,'/'); const ext=lang==='kotlin'?'kt':'java';
+  const mainActivity=lang==='kotlin'?
+`package ${pkg}
+
+import androidx.appcompat.app.AppCompatActivity
+import android.os.Bundle
+import android.widget.TextView
+import android.widget.Button
+
+class MainActivity : AppCompatActivity() {
+
+    private var clickCount = 0
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        setContentView(R.layout.activity_main)
+        
+        val tvHello = findViewById<TextView>(R.id.tvHello)
+        val btnClick = findViewById<Button>(R.id.btnClick)
+        
+        btnClick.setOnClickListener {
+            clickCount++
+            tvHello.text = "Clicked ${'$'}clickCount time(s)!"
+        }
+    }
+    
+    override fun onResume() { super.onResume() }
+    override fun onPause() { super.onPause() }
+}`:
+`package ${pkg};
+
+import androidx.appcompat.app.AppCompatActivity;
+import android.os.Bundle;
+import android.widget.TextView;
+import android.widget.Button;
+import android.view.View;
+import android.widget.Toast;
+
+public class MainActivity extends AppCompatActivity {
+
+    private TextView tvHello;
+    private Button btnClick;
+    private int clickCount = 0;
+
+    @Override
+    protected void onCreate(Bundle savedInstanceState) {
+        super.onCreate(savedInstanceState);
+        setContentView(R.layout.activity_main);
+        
+        tvHello = (TextView) findViewById(R.id.tvHello);
+        btnClick = (Button) findViewById(R.id.btnClick);
+        
+        btnClick.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                clickCount++;
+                tvHello.setText("Clicked " + clickCount + " time(s)!");
+                Toast.makeText(MainActivity.this, "Tap #" + clickCount, Toast.LENGTH_SHORT).show();
+            }
+        });
+    }
+    
+    @Override
+    protected void onResume() { super.onResume(); }
+    
+    @Override
+    protected void onPause() { super.onPause(); }
+    
+    @Override
+    protected void onDestroy() { super.onDestroy(); }
+}`;
+
+  const mainXml=`<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:padding="16dp"
+    android:gravity="center"
+    tools:context=".MainActivity">
+
+    <TextView
+        android:id="@+id/tvHello"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Hello, ${appName}!"
+        android:textSize="24sp"
+        android:textColor="#212121"
+        android:textStyle="bold"
+        android:layout_marginBottom="24dp"/>
+
+    <Button
+        android:id="@+id/btnClick"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Click Me!"
+        android:backgroundTint="#6200EA"
+        android:textColor="#FFFFFF"
+        android:layout_marginBottom="16dp"/>
+
+    <TextView
+        android:id="@+id/tvSubtitle"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Built with AndroidBox"
+        android:textSize="12sp"
+        android:textColor="#9E9E9E"
+        android:layout_marginTop="16dp"/>
+
+</LinearLayout>`;
+
+  const manifest=`<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="${pkg}">
+
+    <uses-permission android:name="android.permission.INTERNET"/>
+
+    <application
+        android:allowBackup="true"
+        android:label="@string/app_name"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.AppCompat.Light.DarkActionBar">
+        
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:label="@string/app_name">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN"/>
+                <category android:name="android.intent.category.LAUNCHER"/>
+            </intent-filter>
+        </activity>
+        
+    </application>
+
+</manifest>`;
+
+  return {
+    [`app/java/${pkgPath}/MainActivity.${ext}`]:mainActivity,
+    'app/res/layout/activity_main.xml':mainXml,
+    'app/AndroidManifest.xml':manifest,
+    'build.gradle':`plugins {\n    id 'com.android.application' version '8.8.0' apply false\n}\ntask clean(type: Delete) { delete rootProject.buildDir }`,
+    'app/build.gradle':`plugins { id 'com.android.application'${lang==='kotlin'?"\n    id 'org.jetbrains.kotlin.android'":''} }\nandroid {\n    namespace '${pkg}'\n    compileSdk 34\n    defaultConfig {\n        applicationId "${pkg}"\n        minSdk ${project.minSdk||29}\n        targetSdk 34\n        versionCode 1\n        versionName "1.0"\n    }\n}\ndependencies {\n    implementation 'androidx.appcompat:appcompat:1.6.1'\n    implementation 'com.google.android.material:material:1.9.0'\n    implementation 'androidx.constraintlayout:constraintlayout:2.1.4'\n}`,
+    'app/res/values/strings.xml':`<resources>\n    <string name="app_name">${appName}</string>\n    <string name="hello_message">Hello, ${appName}!</string>\n    <string name="button_click">Click Me!</string>\n</resources>`,
+    'app/res/values/colors.xml':`<?xml version="1.0" encoding="utf-8"?>\n<resources>\n    <color name="colorPrimary">#6200EE</color>\n    <color name="colorPrimaryDark">#3700B3</color>\n    <color name="colorAccent">#03DAC5</color>\n    <color name="white">#FFFFFFFF</color>\n    <color name="black">#FF000000</color>\n</resources>`,
+    'app/res/values/themes.xml':`<?xml version="1.0" encoding="utf-8"?>\n<resources>\n    <style name="Theme.${appName.replace(/\s/g,'')}\" parent="Theme.MaterialComponents.Light.DarkActionBar">\n        <item name="colorPrimary">@color/colorPrimary</item>\n        <item name="colorPrimaryDark">@color/colorPrimaryDark</item>\n        <item name="colorAccent">@color/colorAccent</item>\n    </style>\n</resources>`,
+    'gradle.properties':'android.useAndroidX=true\nandroid.enableJetifier=true\norg.gradle.jvmargs=-Xmx2048m',
+    '.gitignore':'*.iml\n.gradle\n/local.properties\n/.idea\n/build\n/captures\n.externalNativeBuild\n.cxx\nlocal.properties',
+    'README.md':`# ${appName}\n\nAndroid app created with **AndroidBox**.\n\n## Project Structure\n- \`app/java/\` — Source code (${lang.toUpperCase()})\n- \`app/res/layout/\` — XML layouts\n- \`app/res/values/\` — Resources (strings, colors, themes)\n- \`app/AndroidManifest.xml\` — App manifest\n\n## Build\n\`\`\`bash\n./gradlew assembleDebug\n\`\`\`\n`
+  };
+}
+
+function getTemplateFiles(template,appName,pkg,lang){
+  const base=getDefaultFiles(appName,pkg,lang);
+  const pkgPath=pkg.replace(/\./g,'/'); const ext=lang==='kotlin'?'kt':'java';
+  if(template==='login'){
+    base['app/res/layout/activity_main.xml']=`<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent" android:layout_height="match_parent"
+    android:orientation="vertical" android:padding="32dp" android:gravity="center">
+    <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
+        android:text="${appName}" android:textSize="28sp" android:textStyle="bold" android:textColor="#6200EA" android:layout_marginBottom="40dp"/>
+    <EditText android:id="@+id/etEmail" android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:hint="Email Address" android:inputType="textEmailAddress" android:layout_marginBottom="16dp"/>
+    <EditText android:id="@+id/etPassword" android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:hint="Password" android:inputType="textPassword" android:layout_marginBottom="24dp"/>
+    <Button android:id="@+id/btnLogin" android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:text="LOGIN" android:backgroundTint="#6200EA" android:textColor="#FFFFFF" android:layout_marginBottom="12dp"/>
+    <Button android:id="@+id/btnRegister" android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:text="SIGN UP" android:backgroundTint="#03DAC5" android:textColor="#000000"/>
+    <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
+        android:text="Forgot Password?" android:textColor="#6200EA" android:layout_marginTop="16dp"/>
+</LinearLayout>`;
+  }else if(template==='list'){
+    base['app/res/layout/activity_main.xml']=`<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent" android:layout_height="match_parent" android:orientation="vertical">
+    <androidx.appcompat.widget.Toolbar android:id="@+id/toolbar"
+        android:layout_width="match_parent" android:layout_height="?attr/actionBarSize"
+        android:background="#6200EA" android:elevation="4dp" android:title="${appName}" android:titleTextColor="#FFFFFF"/>
+    <EditText android:id="@+id/etSearch" android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:hint="Search items..." android:padding="12dp" android:background="#F5F5F5"/>
+    <ListView android:id="@+id/listView" android:layout_width="match_parent"
+        android:layout_height="0dp" android:layout_weight="1" android:divider="#E0E0E0" android:dividerHeight="1dp"/>
+</LinearLayout>`;
+  }else if(template==='calculator'){
+    base['app/res/layout/activity_main.xml']=`<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent" android:layout_height="match_parent"
+    android:orientation="vertical" android:background="#212121">
+    <TextView android:id="@+id/tvDisplay" android:layout_width="match_parent" android:layout_height="0dp"
+        android:layout_weight="1" android:text="0" android:textSize="48sp" android:textColor="#FFFFFF"
+        android:gravity="end|bottom" android:padding="16dp"/>
+    <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:text="Expression" android:textSize="14sp" android:textColor="#9E9E9E" android:gravity="end" android:paddingRight="16dp"/>
+    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content">
+        <Button android:layout_width="0dp" android:layout_height="64dp" android:layout_weight="1" android:text="C" android:textSize="18sp" android:textColor="#FFFFFF" android:background="#B71C1C"/>
+        <Button android:layout_width="0dp" android:layout_height="64dp" android:layout_weight="1" android:text="±" android:textSize="18sp" android:textColor="#FFFFFF" android:background="#424242"/>
+        <Button android:layout_width="0dp" android:layout_height="64dp" android:layout_weight="1" android:text="%" android:textSize="18sp" android:textColor="#FFFFFF" android:background="#424242"/>
+        <Button android:layout_width="0dp" android:layout_height="64dp" android:layout_weight="1" android:text="÷" android:textSize="20sp" android:textColor="#FFFFFF" android:background="#6200EA"/>
+    </LinearLayout>
+    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content">
+        <Button android:layout_width="0dp" android:layout_height="64dp" android:layout_weight="1" android:text="7" android:textSize="18sp" android:textColor="#FFFFFF" android:background="#333"/>
+        <Button android:layout_width="0dp" android:layout_height="64dp" android:layout_weight="1" android:text="8" android:textSize="18sp" android:textColor="#FFFFFF" android:background="#333"/>
+        <Button android:layout_width="0dp" android:layout_height="64dp" android:layout_weight="1" android:text="9" android:textSize="18sp" android:textColor="#FFFFFF" android:background="#333"/>
+        <Button android:layout_width="0dp" android:layout_height="64dp" android:layout_weight="1" android:text="×" android:textSize="20sp" android:textColor="#FFFFFF" android:background="#6200EA"/>
+    </LinearLayout>
+    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content">
+        <Button android:layout_width="0dp" android:layout_height="64dp" android:layout_weight="1" android:text="4" android:textSize="18sp" android:textColor="#FFFFFF" android:background="#333"/>
+        <Button android:layout_width="0dp" android:layout_height="64dp" android:layout_weight="1" android:text="5" android:textSize="18sp" android:textColor="#FFFFFF" android:background="#333"/>
+        <Button android:layout_width="0dp" android:layout_height="64dp" android:layout_weight="1" android:text="6" android:textSize="18sp" android:textColor="#FFFFFF" android:background="#333"/>
+        <Button android:layout_width="0dp" android:layout_height="64dp" android:layout_weight="1" android:text="-" android:textSize="20sp" android:textColor="#FFFFFF" android:background="#6200EA"/>
+    </LinearLayout>
+    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content">
+        <Button android:layout_width="0dp" android:layout_height="64dp" android:layout_weight="1" android:text="1" android:textSize="18sp" android:textColor="#FFFFFF" android:background="#333"/>
+        <Button android:layout_width="0dp" android:layout_height="64dp" android:layout_weight="1" android:text="2" android:textSize="18sp" android:textColor="#FFFFFF" android:background="#333"/>
+        <Button android:layout_width="0dp" android:layout_height="64dp" android:layout_weight="1" android:text="3" android:textSize="18sp" android:textColor="#FFFFFF" android:background="#333"/>
+        <Button android:layout_width="0dp" android:layout_height="64dp" android:layout_weight="1" android:text="+" android:textSize="20sp" android:textColor="#FFFFFF" android:background="#6200EA"/>
+    </LinearLayout>
+    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content">
+        <Button android:layout_width="0dp" android:layout_height="64dp" android:layout_weight="2" android:text="0" android:textSize="18sp" android:textColor="#FFFFFF" android:background="#333"/>
+        <Button android:layout_width="0dp" android:layout_height="64dp" android:layout_weight="1" android:text="." android:textSize="18sp" android:textColor="#FFFFFF" android:background="#333"/>
+        <Button android:layout_width="0dp" android:layout_height="64dp" android:layout_weight="1" android:text="=" android:textSize="20sp" android:textColor="#FFFFFF" android:background="#03DAC5"/>
+    </LinearLayout>
+</LinearLayout>`;
+  }else if(template==='tabs'){
+    base['app/res/layout/activity_main.xml']=`<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent" android:layout_height="match_parent" android:orientation="vertical">
+    <com.google.android.material.appbar.AppBarLayout android:layout_width="match_parent" android:layout_height="wrap_content">
+        <androidx.appcompat.widget.Toolbar android:layout_width="match_parent" android:layout_height="?attr/actionBarSize" android:background="#6200EA" android:title="${appName}" android:titleTextColor="#FFF"/>
+        <com.google.android.material.tabs.TabLayout android:id="@+id/tabLayout" android:layout_width="match_parent" android:layout_height="wrap_content" android:background="#6200EA" app:tabTextColor="#80FFFFFF" app:tabSelectedTextColor="#FFFFFF" app:tabIndicatorColor="#03DAC5">
+            <com.google.android.material.tabs.TabItem android:text="Home"/>
+            <com.google.android.material.tabs.TabItem android:text="Profile"/>
+            <com.google.android.material.tabs.TabItem android:text="Settings"/>
+        </com.google.android.material.tabs.TabLayout>
+    </com.google.android.material.appbar.AppBarLayout>
+    <androidx.viewpager2.widget.ViewPager2 android:id="@+id/viewPager" android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1"/>
+</LinearLayout>`;
+  }else if(template==='maps'){
+    base['app/res/layout/activity_main.xml']=`<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent" android:layout_height="match_parent" android:orientation="vertical">
+    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:background="#6200EA" android:padding="10dp">
+        <EditText android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:hint="Search location" android:background="#FFFFFF" android:padding="8dp" android:textSize="12sp"/>
+        <Button android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="GO" android:backgroundTint="#03DAC5" android:textColor="#000" android:layout_marginLeft="8dp"/>
+    </LinearLayout>
+    <fragment android:id="@+id/map" android:name="com.google.android.gms.maps.SupportMapFragment" android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1"/>
+    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:background="#FAFAFA" android:padding="10dp" android:orientation="horizontal">
+        <Button android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content" android:text="📍 My Location" android:textSize="10sp" android:backgroundTint="#6200EA" android:textColor="#FFF"/>
+        <Button android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content" android:text="⭐ Saved" android:textSize="10sp" android:backgroundTint="#03DAC5" android:textColor="#000" android:layout_marginLeft="8dp"/>
+    </LinearLayout>
+</LinearLayout>`;
+  }
+  return base;
+}
+
+function initDefaultProject(){
+  project.files = getDefaultFiles('MyFirstApp','com.example.myfirstapp','java');
+  project.modifiedFiles = new Set();
+  buildFileTree();
+
+  const mainJava = Object.keys(project.files).find(f => f.endsWith('.java'));
+  const xml      = Object.keys(project.files).find(f => f.includes('layout') && f.endsWith('.xml'));
+
+  if (mainJava) openFile(mainJava);
+
+  // Open XML and trigger preview after Monaco has fully initialized
+  setTimeout(() => {
+    if (xml) openFile(xml);
+    if (mainJava) openFile(mainJava);
+    refreshPreview();
+    updateSyncBadge('synced');
+  }, 800);
+
+  addToRecent('MyFirstApp');
+  logToConsole('AndroidBox v2.0 initialized','success');
+  logToConsole('Open Folder (Ctrl+O) · Build APK (Ctrl+B) · Split Editor (Ctrl+\\)','info');
+  detectBackend().then(async ()=>{
+    if (backendAvailable) {
+      try {
+        await loadBackendProject();
+      } catch (e) {
+        logToConsole('Backend project load skipped: ' + (e.message || 'unknown error'),'warn');
+        try { await syncProjectToBackend({ silent: true }); } catch {}
+      }
+    }
+    setTimeout(refreshDevices, 800);
+  });
+}
+
+// ═══════════════════════════
+//  THEME
+// ═══════════════════════════
+let lightTheme=false;
+function toggleTheme(){
+  lightTheme=!lightTheme;closeAllMenus({target:document.body});
+  if(lightTheme){
+    document.documentElement.style.setProperty('--bg-base','#f5f7fa');
+    document.documentElement.style.setProperty('--bg-surface','#ffffff');
+    document.documentElement.style.setProperty('--bg-panel','#f0f2f5');
+    document.documentElement.style.setProperty('--bg-hover','#e8eaed');
+    document.documentElement.style.setProperty('--bg-active','#dde1e7');
+    document.documentElement.style.setProperty('--border','#d1d5db');
+    document.documentElement.style.setProperty('--border-bright','#c5cad3');
+    document.documentElement.style.setProperty('--text-primary','#1a1a2e');
+    document.documentElement.style.setProperty('--text-secondary','#4a5568');
+    document.documentElement.style.setProperty('--text-muted','#9ca3af');
+    if(monacoEditor)monaco.editor.setTheme('vs');
+  }else{
+    document.documentElement.style.setProperty('--bg-base','#0d0f12');
+    document.documentElement.style.setProperty('--bg-surface','#13161b');
+    document.documentElement.style.setProperty('--bg-panel','#191d24');
+    document.documentElement.style.setProperty('--bg-hover','#1e232c');
+    document.documentElement.style.setProperty('--bg-active','#252b36');
+    document.documentElement.style.setProperty('--border','#252b36');
+    document.documentElement.style.setProperty('--border-bright','#2f3847');
+    document.documentElement.style.setProperty('--text-primary','#e8eaf0');
+    document.documentElement.style.setProperty('--text-secondary','#8892a4');
+    document.documentElement.style.setProperty('--text-muted','#4a5568');
+    if(monacoEditor)monaco.editor.setTheme('vs-dark');
+  }
+  showToast(lightTheme?'☀️ Light theme':'🌙 Dark theme');
+}
+
+// ═══════════════════════════
+//  TOAST & NOTIFICATIONS
+// ═══════════════════════════
+function showToast(msg){
+  const ex=document.querySelector('.toast');if(ex)ex.remove();
+  const t=document.createElement('div');t.className='toast';t.textContent=msg;
+  document.body.appendChild(t);setTimeout(()=>t.remove(),2500);
+}
+function showNotif(type,title,sub,duration=4000){
+  const area=document.getElementById('notif-area');
+  const el=document.createElement('div');
+  el.className=`notif ${type}`;
+  const icons={success:'✅',info:'ℹ️',warn:'⚠️',error:'❌'};
+  el.innerHTML=`<span class="notif-icon">${icons[type]||'ℹ️'}</span><div class="notif-body"><div class="notif-title">${title}</div><div class="notif-sub">${sub}</div></div><span class="notif-close" onclick="this.parentElement.remove()">✕</span>`;
+  area.appendChild(el);
+  setTimeout(()=>{if(el.parentElement)el.remove();},duration);
+}
+
+function showError(msg){
+  const banner=document.getElementById('error-banner');
+  const text=document.getElementById('error-text');
+  if (!banner || !text) return;
+  text.textContent = msg || 'Something went wrong';
+  banner.classList.add('show');
+}
+function hideError(){
+  const banner=document.getElementById('error-banner');
+  if (banner) banner.classList.remove('show');
+}
+
+// ═══════════════════════════
+//  CLOCK
+// ═══════════════════════════
+function updateClock(){const n=new Date();document.getElementById('phone-time').textContent=`${String(n.getHours()).padStart(2,'0')}:${String(n.getMinutes()).padStart(2,'0')}`;}
+updateClock();setInterval(updateClock,30000);
+
+// ═══════════════════════════
+//  KEYBOARD SHORTCUTS
+// ═══════════════════════════
+document.addEventListener('keydown',e=>{
+  const ctrl=e.ctrlKey||e.metaKey;
+  if(ctrl&&e.key==='n'){e.preventDefault();showNewProject();}
+  if(ctrl&&e.key==='o'&&!e.shiftKey){e.preventDefault();showOpenFolder();}
+  if(ctrl&&e.key==='O'){e.preventDefault();openFileFromDisk();}
+  if(ctrl&&e.key==='s'&&!e.shiftKey){e.preventDefault();saveCurrentFile();}
+  if(ctrl&&e.key==='S'){e.preventDefault();saveAllFiles();}
+  if(ctrl&&e.key==='b'){e.preventDefault();buildAPK();}
+  if(ctrl&&e.key==='Enter'){e.preventDefault();runOnDevice();}
+  if(ctrl&&e.key==='f'){e.preventDefault();openFindBar();}
+  if(ctrl&&e.key==='h'){e.preventDefault();openFindReplace();}
+  if(ctrl&&e.key==='F'){e.preventDefault();switchPanel('search');}
+  if(ctrl&&e.key==='\\'){e.preventDefault();toggleSplit();}
+  if(ctrl&&e.key==='`'){e.preventDefault();toggleConsole();}
+  if(ctrl&&e.key===','){e.preventDefault();showSettings();}
+  if(e.key==='Escape'){closeBuildModal();closeNewProject();closeOpenFolder();closeSettings();closeFindBar();document.querySelectorAll('.menu-item').forEach(m=>m.classList.remove('active'));}
+});
+
+function delay(ms){return new Promise(r=>setTimeout(r,ms));}
+</script>
+</body>
+</html>

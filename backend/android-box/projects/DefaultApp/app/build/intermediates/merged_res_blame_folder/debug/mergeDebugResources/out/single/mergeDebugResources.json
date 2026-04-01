@@ -1,0 +1,130 @@
+[
+    {
+        "merged": "C:\\Users\\skaif\\.gradle\\daemon\\9.3.1\\com.rndevil.x0xdevil.app-debug-32:\\mipmap-hdpi_ic_launcher.webp.flat",
+        "source": "C:\\Users\\skaif\\.gradle\\daemon\\9.3.1\\com.rndevil.x0xdevil.app-main-34:\\mipmap-hdpi\\ic_launcher.webp"
+    },
+    {
+        "merged": "com.rndevil.x0xdevil.app-debug-32:/drawable_devil_logo_png.png.flat",
+        "source": "com.rndevil.x0xdevil.app-main-34:/drawable/devil_logo_png.png"
+    },
+    {
+        "merged": "com.rndevil.x0xdevil.app-debug-32:/mipmap-xxxhdpi_ic_launcher.webp.flat",
+        "source": "com.rndevil.x0xdevil.app-main-34:/mipmap-xxxhdpi/ic_launcher.webp"
+    },
+    {
+        "merged": "C:\\Users\\skaif\\.gradle\\daemon\\9.3.1\\com.rndevil.x0xdevil.app-debug-32:\\drawable_ic_launcher_background.xml.flat",
+        "source": "C:\\Users\\skaif\\.gradle\\daemon\\9.3.1\\com.rndevil.x0xdevil.app-main-34:\\drawable\\ic_launcher_background.xml"
+    },
+    {
+        "merged": "C:\\Users\\skaif\\.gradle\\daemon\\9.3.1\\com.rndevil.x0xdevil.app-debug-32:\\drawable_devil_logo.xml.flat",
+        "source": "C:\\Users\\skaif\\.gradle\\daemon\\9.3.1\\com.rndevil.x0xdevil.app-main-34:\\drawable\\devil_logo.xml"
+    },
+    {
+        "merged": "C:\\Users\\skaif\\.gradle\\daemon\\9.3.1\\com.rndevil.x0xdevil.app-debug-32:\\mipmap-xhdpi_ic_launcher_round.webp.flat",
+        "source": "C:\\Users\\skaif\\.gradle\\daemon\\9.3.1\\com.rndevil.x0xdevil.app-main-34:\\mipmap-xhdpi\\ic_launcher_round.webp"
+    },
+    {
+        "merged": "C:\\Users\\skaif\\.gradle\\daemon\\9.3.1\\com.rndevil.x0xdevil.app-debug-32:\\drawable_devil_logo_png.png.flat",
+        "source": "C:\\Users\\skaif\\.gradle\\daemon\\9.3.1\\com.rndevil.x0xdevil.app-main-34:\\drawable\\devil_logo_png.png"
+    },
+    {
+        "merged": "C:\\Users\\skaif\\.gradle\\daemon\\9.3.1\\com.rndevil.x0xdevil.app-debug-32:\\mipmap-mdpi_ic_launcher.webp.flat",
+        "source": "C:\\Users\\skaif\\.gradle\\daemon\\9.3.1\\com.rndevil.x0xdevil.app-main-34:\\mipmap-mdpi\\ic_launcher.webp"
+    },
+    {
+        "merged": "C:\\Users\\skaif\\.gradle\\daemon\\9.3.1\\com.rndevil.x0xdevil.app-debug-32:\\drawable_ic_launcher_foreground.xml.flat",
+        "source": "C:\\Users\\skaif\\.gradle\\daemon\\9.3.1\\com.rndevil.x0xdevil.app-main-34:\\drawable\\ic_launcher_foreground.xml"
+    },
+    {
+        "merged": "C:\\Users\\skaif\\.gradle\\daemon\\9.3.1\\com.rndevil.x0xdevil.app-debug-32:\\layout_activity_splash.xml.flat",
+        "source": "C:\\Users\\skaif\\.gradle\\daemon\\9.3.1\\com.rndevil.x0xdevil.app-main-34:\\layout\\activity_splash.xml"
+    },
+    {
+        "merged": "C:\\Users\\skaif\\.gradle\\daemon\\9.3.1\\com.rndevil.x0xdevil.app-debug-32:\\mipmap-xxxhdpi_ic_launcher.webp.flat",
+        "source": "C:\\Users\\skaif\\.gradle\\daemon\\9.3.1\\com.rndevil.x0xdevil.app-main-34:\\mipmap-xxxhdpi\\ic_launcher.webp"
+    },
+    {
+        "merged": "C:\\Users\\skaif\\.gradle\\daemon\\9.3.1\\com.rndevil.x0xdevil.app-debug-32:\\mipmap-hdpi_ic_launcher_round.webp.flat",
+        "source": "C:\\Users\\skaif\\.gradle\\daemon\\9.3.1\\com.rndevil.x0xdevil.app-main-34:\\mipmap-hdpi\\ic_launcher_round.webp"
+    },
+    {
+        "merged": "com.rndevil.x0xdevil.app-debug-32:/mipmap-xxhdpi_ic_launcher.webp.flat",
+        "source": "com.rndevil.x0xdevil.app-main-34:/mipmap-xxhdpi/ic_launcher.webp"
+    },
+    {
+        "merged": "C:\\Users\\skaif\\.gradle\\daemon\\9.3.1\\com.rndevil.x0xdevil.app-debug-32:\\anim_zoom_in.xml.flat",
+        "source": "C:\\Users\\skaif\\.gradle\\daemon\\9.3.1\\com.rndevil.x0xdevil.app-main-34:\\anim\\zoom_in.xml"
+    },
+    {
+        "merged": "C:\\Users\\skaif\\.gradle\\daemon\\9.3.1\\com.rndevil.x0xdevil.app-debug-32:\\drawable_screenshot_2026_03_18_035506.png.flat",
+        "source": "C:\\Users\\skaif\\.gradle\\daemon\\9.3.1\\com.rndevil.x0xdevil.app-main-34:\\drawable\\screenshot_2026_03_18_035506.png"
+    },
+    {
+        "merged": "C:\\Users\\skaif\\.gradle\\daemon\\9.3.1\\com.rndevil.x0xdevil.app-debug-32:\\mipmap-anydpi-v26_ic_launcher_round.xml.flat",
+        "source": "C:\\Users\\skaif\\.gradle\\daemon\\9.3.1\\com.rndevil.x0xdevil.app-main-34:\\mipmap-anydpi-v26\\ic_launcher_round.xml"
+    },
+    {
+        "merged": "C:\\Users\\skaif\\.gradle\\daemon\\9.3.1\\com.rndevil.x0xdevil.app-debug-32:\\mipmap-mdpi_ic_launcher_round.webp.flat",
+        "source": "C:\\Users\\skaif\\.gradle\\daemon\\9.3.1\\com.rndevil.x0xdevil.app-main-34:\\mipmap-mdpi\\ic_launcher_round.webp"
+    },
+    {
+        "merged": "C:\\Users\\skaif\\.gradle\\daemon\\9.3.1\\com.rndevil.x0xdevil.app-debug-32:\\mipmap-xxhdpi_ic_launcher_round.webp.flat",
+        "source": "C:\\Users\\skaif\\.gradle\\daemon\\9.3.1\\com.rndevil.x0xdevil.app-main-34:\\mipmap-xxhdpi\\ic_launcher_round.webp"
+    },
+    {
+        "merged": "com.rndevil.x0xdevil.app-debug-32:/mipmap-xhdpi_ic_launcher_round.webp.flat",
+        "source": "com.rndevil.x0xdevil.app-main-34:/mipmap-xhdpi/ic_launcher_round.webp"
+    },
+    {
+        "merged": "C:\\Users\\skaif\\.gradle\\daemon\\9.3.1\\com.rndevil.x0xdevil.app-debug-32:\\mipmap-anydpi-v26_ic_launcher.xml.flat",
+        "source": "C:\\Users\\skaif\\.gradle\\daemon\\9.3.1\\com.rndevil.x0xdevil.app-main-34:\\mipmap-anydpi-v26\\ic_launcher.xml"
+    },
+    {
+        "merged": "com.rndevil.x0xdevil.app-debug-32:/mipmap-mdpi_ic_launcher_round.webp.flat",
+        "source": "com.rndevil.x0xdevil.app-main-34:/mipmap-mdpi/ic_launcher_round.webp"
+    },
+    {
+        "merged": "com.rndevil.x0xdevil.app-debug-32:/mipmap-xxxhdpi_ic_launcher_round.webp.flat",
+        "source": "com.rndevil.x0xdevil.app-main-34:/mipmap-xxxhdpi/ic_launcher_round.webp"
+    },
+    {
+        "merged": "C:\\Users\\skaif\\.gradle\\daemon\\9.3.1\\com.rndevil.x0xdevil.app-debug-32:\\xml_data_extraction_rules.xml.flat",
+        "source": "C:\\Users\\skaif\\.gradle\\daemon\\9.3.1\\com.rndevil.x0xdevil.app-main-34:\\xml\\data_extraction_rules.xml"
+    },
+    {
+        "merged": "C:\\Users\\skaif\\.gradle\\daemon\\9.3.1\\com.rndevil.x0xdevil.app-debug-32:\\xml_backup_rules.xml.flat",
+        "source": "C:\\Users\\skaif\\.gradle\\daemon\\9.3.1\\com.rndevil.x0xdevil.app-main-34:\\xml\\backup_rules.xml"
+    },
+    {
+        "merged": "C:\\Users\\skaif\\.gradle\\daemon\\9.3.1\\com.rndevil.x0xdevil.app-debug-32:\\mipmap-xhdpi_ic_launcher.webp.flat",
+        "source": "C:\\Users\\skaif\\.gradle\\daemon\\9.3.1\\com.rndevil.x0xdevil.app-main-34:\\mipmap-xhdpi\\ic_launcher.webp"
+    },
+    {
+        "merged": "com.rndevil.x0xdevil.app-debug-32:/mipmap-hdpi_ic_launcher.webp.flat",
+        "source": "com.rndevil.x0xdevil.app-main-34:/mipmap-hdpi/ic_launcher.webp"
+    },
+    {
+        "merged": "com.rndevil.x0xdevil.app-debug-32:/drawable_screenshot_2026_03_18_035506.png.flat",
+        "source": "com.rndevil.x0xdevil.app-main-34:/drawable/screenshot_2026_03_18_035506.png"
+    },
+    {
+        "merged": "com.rndevil.x0xdevil.app-debug-32:/mipmap-xhdpi_ic_launcher.webp.flat",
+        "source": "com.rndevil.x0xdevil.app-main-34:/mipmap-xhdpi/ic_launcher.webp"
+    },
+    {
+        "merged": "C:\\Users\\skaif\\.gradle\\daemon\\9.3.1\\com.rndevil.x0xdevil.app-debug-32:\\mipmap-xxxhdpi_ic_launcher_round.webp.flat",
+        "source": "C:\\Users\\skaif\\.gradle\\daemon\\9.3.1\\com.rndevil.x0xdevil.app-main-34:\\mipmap-xxxhdpi\\ic_launcher_round.webp"
+    },
+    {
+        "merged": "com.rndevil.x0xdevil.app-debug-32:/mipmap-xxhdpi_ic_launcher_round.webp.flat",
+        "source": "com.rndevil.x0xdevil.app-main-34:/mipmap-xxhdpi/ic_launcher_round.webp"
+    },
+    {
+        "merged": "C:\\Users\\skaif\\.gradle\\daemon\\9.3.1\\com.rndevil.x0xdevil.app-debug-32:\\layout_activity_main.xml.flat",
+        "source": "C:\\Users\\skaif\\.gradle\\daemon\\9.3.1\\com.rndevil.x0xdevil.app-main-34:\\layout\\activity_main.xml"
+    },
+    {
+        "merged": "C:\\Users\\skaif\\.gradle\\daemon\\9.3.1\\com.rndevil.x0xdevil.app-debug-32:\\mipmap-xxhdpi_ic_launcher.webp.flat",
+        "source": "C:\\Users\\skaif\\.gradle\\daemon\\9.3.1\\com.rndevil.x0xdevil.app-main-34:\\mipmap-xxhdpi\\ic_launcher.webp"
+    }
+]

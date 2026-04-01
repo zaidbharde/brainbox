@@ -1,0 +1,13 @@
+#!/usr/bin/env sh
+DIR=$(cd "$(dirname "$0")" && pwd)
+WRAPPER_JAR="$DIR/gradle/wrapper/gradle-wrapper.jar"
+if [ ! -f "$WRAPPER_JAR" ]; then
+  echo "Gradle wrapper jar missing." 1>&2
+  exit 1
+fi
+if [ -n "$JAVA_HOME" ]; then
+  "$JAVA_HOME/bin/java" -classpath "$WRAPPER_JAR" org.gradle.wrapper.GradleWrapperMain "$@"
+else
+  java -classpath "$WRAPPER_JAR" org.gradle.wrapper.GradleWrapperMain "$@"
+fi
+
