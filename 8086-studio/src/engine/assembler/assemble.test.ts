@@ -247,6 +247,49 @@ describe("assembler", () => {
       expect(result.symbols.lookup("VAR")?.segment).toBe("DATA");
     });
 
+    it("packs named segments in order on paragraph boundaries", () => {
+      // A segment base is shifted left by four to form a physical address, so
+      // a base that is not a multiple of 16 could not be held in a segment
+      // register. MASM packs segments in source order; a fixed stride would
+      // leave a hole and would not match a real link.
+      const source = [
+        ".MODEL small",
+        "CODE SEGMENT",
+        "  MOV AX, 1",
+        "  MOV BX, 2",
+        "CODE ENDS",
+        "DATA SEGMENT",
+        "  DB 1, 2, 3, 4, 5",
+        "DATA ENDS",
+        "END",
+      ].join("\n");
+      const result = assemble(source);
+      expect(errorsOf(result)).toEqual([]);
+      const code = result.segments.find((s) => s.name === "CODE")!;
+      const data = result.segments.find((s) => s.name === "DATA")!;
+      // 3 bytes of code, so DATA starts on the next paragraph, 16 bytes in.
+      expect(code.base).toBe(0);
+      expect(data.base).toBe(16);
+      expect(data.base % 16).toBe(0);
+      // And the data really is where the segment register says it is.
+      expect(Array.from(data.bytes)).toEqual([1, 2, 3, 4, 5]);
+    });
+
+    it("keeps every segment base loadable into a segment register", () => {
+      const source = [
+        "CODE SEGMENT",
+        "  DB 1, 2, 3",
+        "CODE ENDS",
+        "DATA SEGMENT",
+        "  DB 4",
+        "DATA ENDS",
+      ].join("\n");
+      for (const segment of assemble(source).segments) {
+        expect(segment.base & 0xf, `${segment.name} base is not a paragraph`).toBe(0);
+        expect(segment.base).toBeLessThanOrEqual(0xffff);
+      }
+    });
+
     it("uses the END label as the entry point", () => {
       const source = ["CODE SEGMENT", "  JMP over", "  NOP", "over:", "  HLT", "CODE ENDS", "END over"].join("\n");
       const result = assemble(source);

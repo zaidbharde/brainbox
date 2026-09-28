@@ -77,8 +77,17 @@ interface Statement {
 const DEFAULT_ORIGIN = 0x0100;
 const DEFAULT_SP = 0xfffe;
 
-/** Segment base assignment for programs that use SEGMENT. 64 KB apart. */
-const NAMED_SEGMENT_STRIDE = 0x1000;
+/**
+ * Round a segment base up to the next paragraph.
+ *
+ * A segment register is multiplied by 16 to form the high part of a physical
+ * address, so a base that is not a multiple of 16 could not be held in a
+ * segment register at all. Paragraph alignment is what makes the layout
+ * loadable rather than merely arithmetic.
+ */
+function alignToParagraph(value: number): number {
+  return (value + 0xf) & ~0xf;
+}
 
 const DATA_DIRECTIVE_SIZE: Record<string, 8 | 16 | 32> = { DB: 8, DW: 16, DD: 32 };
 
@@ -997,13 +1006,20 @@ function resolveLayout(ctx: PassContext): ResolvedLayout {
     };
   }
 
-  // Named segments, laid out 64 KB apart so each is independently addressable.
+  // Named segments are packed in source order, each starting on a paragraph
+  // boundary: 16 bytes, because a segment base is shifted left by four when the
+  // CPU forms a physical address. MASM links this way, so a program assembled
+  // here addresses the same bytes it would after a real link -- and consecutive
+  // segments abut rather than sitting 4 KB apart with a hole between them.
   const segments: SegmentImage[] = [];
   const bases = new Map<string, number>();
-  ctx.segmentOrder.forEach((name, index) => {
-    if (name === "_COM") return;
-    bases.set(name, index * NAMED_SEGMENT_STRIDE);
-  });
+  let nextBase = 0;
+  for (const name of ctx.segmentOrder) {
+    if (name === "_COM") continue;
+    bases.set(name, nextBase);
+    const buffer = ctx.buffers.get(name);
+    nextBase = alignToParagraph(nextBase + (buffer?.usedSize ?? 0));
+  }
 
   let codeSegmentName = ctx.codeSegmentName;
   let dataSegmentName = ctx.dataSegmentName;

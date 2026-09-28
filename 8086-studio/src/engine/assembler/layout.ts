@@ -96,6 +96,11 @@ export class SegmentBuffer {
     this.high = Math.max(this.high, offset);
   }
 
+  /** Bytes actually emitted, from `origin` to the high-water mark. */
+  get usedSize(): number {
+    return Math.max(this.high - this.origin, 0);
+  }
+
   /** Final image, trimmed to the region actually used. */
   image(): Uint8Array {
     const length = Math.max(this.high - this.origin, 1);
