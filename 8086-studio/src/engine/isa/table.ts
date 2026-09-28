@@ -88,8 +88,34 @@ export interface InsnDef {
   readonly ops: readonly OperandType[];
   /** Literal opcode bytes, before any ModR/M byte. */
   readonly bytes: readonly number[];
+  /**
+   * Set when the opcode *is* the register-specific form of a group, i.e. the
+   * register number lives in the low three bits of the opcode (0x40-0x4F
+   * INC/DEC, 0x50-0x5F PUSH/POP, 0x90-0x97 XCHG, 0xB0-0xBF MOV reg,imm).
+   *
+   * Without this the table could not tell `INC BX` (0x43) from `INC SI`
+   * (0x46), because both entries declare the same operand slot. The encoder
+   * uses it to require that the operand really is register `code`, and the
+   * decoder uses it to report the register a byte decodes to.
+   */
+  readonly opcodeReg?: { slot: OperandSlot; code: number };
   readonly modrm?: ModRMShape;
-  readonly imm?: { slot: OperandSlot; size: 8 | 16 };
+  readonly imm?: {
+    slot: OperandSlot;
+    size: 8 | 16;
+    /**
+     * True for 0x83, whose byte is sign-extended to 16 bits. It matters twice:
+     * the CPU must extend rather than zero, and the encoder prefers this form
+     * over a 16-bit immediate when both are the same length, which is what
+     * makes `add ax,1` come out as 83 C0 01 rather than 05 01 00.
+     */
+    signExtend?: boolean;
+  };
+  /**
+   * A second immediate, for the one instruction that has two: ENTER takes a
+   * 16-bit frame size followed by an 8-byte nesting level.
+   */
+  readonly imm2?: { slot: OperandSlot; size: 8 | 16; signExtend?: boolean };
   /** Relative branch target. */
   readonly rel?: { slot: OperandSlot; size: 8 | 16 };
   /** moffs operand slot. */
@@ -130,11 +156,18 @@ const SHIFT: ReadonlyArray<{ digit: number; mnem: string; note?: string }> = [
   { digit: 3, mnem: "RCR" },
   { digit: 4, mnem: "SHL" },
   { digit: 5, mnem: "SHR" },
-  { digit: 6, mnem: "SAL", note: "alias of SHL" },
+  // 0xD0-0xD3 /6 is undefined on an 8086. SAL is not a separate opcode: it is
+  // a second name for /4, handled by SHIFT_ALIASES below. Encoding it as /6
+  // would be wrong, and gas confirms it emits D1 E0 for `sal ax,1`.
   { digit: 7, mnem: "SAR" },
 ];
 
 const SHIFT_FLAGS = ["CF", "OF", "SF", "ZF", "AF", "PF"];
+
+/** Shifts whose only 8086 opcode is spelled under a different name. */
+export const SHIFT_ALIASES: Readonly<Record<string, string>> = {
+  SAL: "SHL",
+};
 
 /** Jcc aliases, short jumps (0x70-0x7F) and near jumps (0x80-0x8F). */
 const JCC: ReadonlyArray<{ digit: number; mnem: string; condition: string }> = [
@@ -218,18 +251,73 @@ function buildTable(): InsnDef[] {
     { mnem: "AAS", ops: ["none"], bytes: [0x3f], flags: ["CF", "AF"] },
   );
 
+  // -- accumulator short forms: op AL,imm8 / op AX,imm16 ------------------
+  // These sit at +4 and +5 within each arithmetic group and name the
+  // accumulator directly, which is why they encode a byte shorter than the
+  // 0x80-0x83 group. `ADD AL,1` is 04 01, not 80 C0 01.
+  for (const op of ARITH) {
+    table.push({
+      mnem: op.mnem,
+      ops: ["al", "imm8"],
+      bytes: [op.base + 4],
+      imm: { slot: 1, size: 8 },
+      flags: op.flags,
+    });
+    table.push({
+      mnem: op.mnem,
+      ops: ["ax", "imm16"],
+      bytes: [op.base + 5],
+      imm: { slot: 1, size: 16 },
+      flags: op.flags,
+    });
+  }
+
   // -- 0x40-0x7F: INC/DEC r16 --------------------------------------------
   for (let i = 0; i < 8; i++) {
     table.push({
       mnem: "INC",
       ops: ["r16"],
       bytes: [0x40 + i],
+      opcodeReg: { slot: 0, code: i },
       flags: ["OF", "SF", "ZF", "AF", "PF"],
+    });
+  }
+
+  // -- 0x6C-0x6F: string port I/O ----------------------------------------
+  // The only 8086 forms: a single byte or word, always from AL/AX to DX, and
+  // always via ES:[DI]. The 0x6C-0x6F range is otherwise 80186+ (PUSHA,
+  // PUSH imm) and is deliberately not modelled.
+  table.push(
+    { mnem: "INSB", ops: ["none"], bytes: [0x6c], flags: ["DF"], note: "AL <- port[DX], ES:[DI] += 1" },
+    { mnem: "INSW", ops: ["none"], bytes: [0x6d], flags: ["DF"], note: "AX <- port[DX], ES:[DI] += 2" },
+    { mnem: "OUTSB", ops: ["none"], bytes: [0x6e], flags: ["DF"], note: "port[DX] <- AL, ES:[DI] += 1" },
+    { mnem: "OUTSW", ops: ["none"], bytes: [0x6f], flags: ["DF"], note: "port[DX] <- AX, ES:[DI] += 2" },
+  );
+
+
+  // -- 0x50-0x5F: PUSH/POP r16 -------------------------------------------
+  // On the 8086 PUSH and POP default to SS; that is what the segment
+  // prefix-less form means, and the CPU supplies SS.
+  for (let i = 0; i < 8; i++) {
+    table.push({
+      mnem: "PUSH",
+      ops: ["r16"],
+      bytes: [0x50 + i],
+      opcodeReg: { slot: 0, code: i },
+      flags: [],
+    });
+    table.push({
+      mnem: "POP",
+      ops: ["r16"],
+      bytes: [0x58 + i],
+      opcodeReg: { slot: 0, code: i },
+      flags: [],
     });
     table.push({
       mnem: "DEC",
       ops: ["r16"],
       bytes: [0x48 + i],
+      opcodeReg: { slot: 0, code: i },
       flags: ["OF", "SF", "ZF", "AF", "PF"],
     });
   }
@@ -267,7 +355,7 @@ function buildTable(): InsnDef[] {
       ops: ["rm16", "imm8"],
       bytes: [0x83],
       modrm: { digit: op.digit, rm: 0 },
-      imm: { slot: 1, size: 8 },
+      imm: { slot: 1, size: 8, signExtend: true },
       flags: op.flags,
       note: "imm8 is sign-extended to 16 bits",
     });
@@ -279,6 +367,11 @@ function buildTable(): InsnDef[] {
     { mnem: "TEST", ops: ["rm16", "r16"], bytes: [0x85], modrm: { reg: 1, rm: 0 }, flags: ["SF", "ZF", "PF"] },
     { mnem: "XCHG", ops: ["rm8", "r8"], bytes: [0x86], modrm: { reg: 1, rm: 0 }, flags: [] },
     { mnem: "XCHG", ops: ["rm16", "r16"], bytes: [0x87], modrm: { reg: 1, rm: 0 }, flags: [] },
+    // XCHG is commutative, so `xchg ax,[bx]` has to encode the same way as
+    // `xchg [bx],ax`; only the destination of the store differs. gas confirms
+    // both spellings produce 87 04.
+    { mnem: "XCHG", ops: ["r8", "rm8"], bytes: [0x86], modrm: { reg: 0, rm: 1 }, flags: [] },
+    { mnem: "XCHG", ops: ["r16", "rm16"], bytes: [0x87], modrm: { reg: 0, rm: 1 }, flags: [] },
     { mnem: "MOV", ops: ["rm8", "r8"], bytes: [0x88], modrm: { reg: 1, rm: 0 }, flags: [] },
     { mnem: "MOV", ops: ["rm16", "r16"], bytes: [0x89], modrm: { reg: 1, rm: 0 }, flags: [] },
     { mnem: "MOV", ops: ["r8", "rm8"], bytes: [0x8a], modrm: { reg: 0, rm: 1 }, flags: [] },
@@ -320,8 +413,9 @@ function buildTable(): InsnDef[] {
       mnem: i === 0 ? "NOP" : "XCHG",
       ops: i === 0 ? ["none"] : ["ax", "r16"],
       bytes: [0x90 + i],
+      // 0x90+reg is XCHG AX,reg; 0x90 alone is the one-byte NOP.
+      ...(i === 0 ? { note: "0x90 is the canonical one-byte NOP" } : { opcodeReg: { slot: 1, code: i } }),
       flags: [],
-      ...(i === 0 ? { note: "0x90 is the canonical one-byte NOP" } : {}),
     });
   }
   table.push(
@@ -361,6 +455,7 @@ function buildTable(): InsnDef[] {
       mnem: "MOV",
       ops: ["r8", "imm8"],
       bytes: [0xb0 + i],
+      opcodeReg: { slot: 0, code: i },
       imm: { slot: 1, size: 8 },
       flags: [],
     });
@@ -368,6 +463,7 @@ function buildTable(): InsnDef[] {
       mnem: "MOV",
       ops: ["r16", "imm16"],
       bytes: [0xb8 + i],
+      opcodeReg: { slot: 0, code: i },
       imm: { slot: 1, size: 16 },
       flags: [],
     });
@@ -381,7 +477,15 @@ function buildTable(): InsnDef[] {
     { mnem: "LDS", ops: ["r16", "rm16"], bytes: [0xc5], modrm: { reg: 0, rm: 1, mod3Forbidden: true }, flags: [] },
     { mnem: "MOV", ops: ["rm8", "imm8"], bytes: [0xc6], modrm: { digit: 0, rm: 0 }, imm: { slot: 1, size: 8 }, flags: [] },
     { mnem: "MOV", ops: ["rm16", "imm16"], bytes: [0xc7], modrm: { digit: 0, rm: 0 }, imm: { slot: 1, size: 16 }, flags: [] },
-    { mnem: "ENTER", ops: ["imm16", "imm8"], bytes: [0xc8], imm: { slot: 0, size: 16 }, flags: [], note: "level must be 0 on an 8086" },
+    {
+      mnem: "ENTER",
+      ops: ["imm16", "imm8"],
+      bytes: [0xc8],
+      imm: { slot: 0, size: 16 },
+      imm2: { slot: 1, size: 8 },
+      flags: [],
+      note: "level must be 0 on an 8086",
+    },
     { mnem: "LEAVE", ops: ["none"], bytes: [0xc9], flags: [] },
     { mnem: "RETF", ops: ["imm16"], bytes: [0xca], imm: { slot: 0, size: 16 }, flags: [] },
     { mnem: "RETF", ops: ["none"], bytes: [0xcb], flags: [] },
@@ -570,6 +674,62 @@ function buildTable(): InsnDef[] {
       flags: [],
       ext: 0x04,
       note: "BrainBox extension: AL = AL % operand (no flags)",
+    },
+    // The legacy engine gives these extensions the full value of whichever
+    // register is named, at either width — the demos print 16-bit results with
+    // `OUT AX` and single characters with `OUTC DL` — so each has a form per
+    // width rather than one canonical size.
+    {
+      mnem: "OUT",
+      ops: ["rm16"],
+      bytes: [0x0f, 0x05],
+      modrm: { digit: 0, rm: 0 },
+      flags: [],
+      ext: 0x05,
+      note: "BrainBox extension: emit 16-bit register as a numeric output value",
+    },
+    {
+      mnem: "OUTC",
+      ops: ["rm16"],
+      bytes: [0x0f, 0x06],
+      modrm: { digit: 0, rm: 0 },
+      flags: [],
+      ext: 0x06,
+      note: "BrainBox extension: emit 16-bit register as a character",
+    },
+    {
+      mnem: "OUTP",
+      ops: ["imm8", "rm16"],
+      bytes: [0x0f, 0x07],
+      modrm: { digit: 0, rm: 1 },
+      imm: { slot: 0, size: 8 },
+      flags: [],
+      ext: 0x07,
+      note: "BrainBox extension: write 16-bit register to the I/O port window",
+    },
+    // `IN r, imm8` for a register other than AL/AX is an 186 addition, and on
+    // an 8086 the opcodes it would use (0x04/0x05) belong to ADD AL/AX, imm8.
+    // The shipped interrupt demo reads into BX, so these go in the extension
+    // space instead of stealing ADD.
+    {
+      mnem: "IN",
+      ops: ["rm8", "imm8"],
+      bytes: [0x0f, 0x08],
+      modrm: { digit: 0, rm: 0 },
+      imm: { slot: 1, size: 8 },
+      flags: [],
+      ext: 0x08,
+      note: "BrainBox extension: read a port into an 8-bit register",
+    },
+    {
+      mnem: "IN",
+      ops: ["rm16", "imm8"],
+      bytes: [0x0f, 0x09],
+      modrm: { digit: 0, rm: 0 },
+      imm: { slot: 1, size: 8 },
+      flags: [],
+      ext: 0x09,
+      note: "BrainBox extension: read a port into a 16-bit register",
     },
   );
 

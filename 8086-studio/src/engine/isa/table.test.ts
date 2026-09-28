@@ -5,6 +5,7 @@ import {
   BY_PRIMARY_OPCODE,
   INSTRUCTION_TABLE,
   JCC_ALIASES,
+  SHIFT_ALIASES,
   PREFIXES,
   type InsnDef,
 } from "./table";
@@ -143,8 +144,8 @@ describe("ISA table coverage", () => {
     "AND", "OR", "XOR", "NOT", "TEST",
     // bcd / sign
     "DAA", "DAS", "AAA", "AAS", "AAM", "AAD", "CBW", "CWD",
-    // shifts
-    "SHL", "SAL", "SHR", "SAR", "ROL", "ROR", "RCL", "RCR",
+    // shifts (SAL is an alias for SHL, checked separately)
+    "SHL", "SHR", "SAR", "ROL", "ROR", "RCL", "RCR",
     // control
     "JMP", "CALL", "RET", "RETF", "LOOP", "LOOPE", "LOOPNE", "JCXZ",
     // flags
@@ -195,17 +196,42 @@ describe("ISA table coverage", () => {
     }
   });
 
-  it("covers all 8 shift /digit groups in all four 0xD0-0xD3 forms", () => {
-    const names = ["ROL", "ROR", "RCL", "RCR", "SHL", "SHR", "SAL", "SAR"];
-    for (let digit = 0; digit < 8; digit++) {
+  it("covers the 8086 shift /digit groups in all four 0xD0-0xD3 forms", () => {
+    // /6 is undefined on an 8086. It is *not* SAL: SAL is a second name for
+    // /4, which is what gas encodes `sal ax,1` as (D1 E0).
+    const names: Array<[number, string]> = [
+      [0, "ROL"],
+      [1, "ROR"],
+      [2, "RCL"],
+      [3, "RCR"],
+      [4, "SHL"],
+      [5, "SHR"],
+      [7, "SAR"],
+    ];
+    for (const [digit, name] of names) {
       for (const base of [0xd0, 0xd1, 0xd2, 0xd3]) {
         const defs = INSTRUCTION_TABLE.filter(
           (d) => d.bytes[0] === base && d.modrm?.digit === digit,
         );
         expect(defs.length, `opcode 0x${base.toString(16)} /${digit}`).toBe(1);
-        expect(defs[0].mnem).toBe(names[digit]);
+        expect(defs[0].mnem).toBe(name);
       }
     }
+    for (const base of [0xd0, 0xd1, 0xd2, 0xd3]) {
+      const defs = INSTRUCTION_TABLE.filter(
+        (d) => d.bytes[0] === base && d.modrm?.digit === 6,
+      );
+      expect(defs.length, `opcode 0x${base.toString(16)} /6 must be undefined`).toBe(0);
+    }
+  });
+
+  it("treats SAL as an alias of SHL rather than its own opcode", () => {
+    expect(SHIFT_ALIASES.SAL).toBe("SHL");
+    const sal = INSTRUCTION_TABLE.filter(
+      (d) => d.bytes[0] === 0xd1 && d.modrm?.digit === 4,
+    );
+    expect(sal).toHaveLength(1);
+    expect(sal[0].mnem).toBe("SHL");
   });
 
   it("covers the 0xF6/0xF7 group", () => {
@@ -249,12 +275,35 @@ describe("ISA table coverage", () => {
   });
 
   it("keeps BrainBox extensions out of the real 8086 opcode space", () => {
-    for (const def of INSTRUCTION_TABLE) {
-      if (def.ext === undefined) continue;
+    const extensions = INSTRUCTION_TABLE.filter((d) => d.ext !== undefined);
+    for (const def of extensions) {
       expect(def.bytes[0], `${def.mnem} must escape via 0x0F`).toBe(0x0f);
     }
-    expect(BY_EXTENSION.size).toBe(5);
-    expect([...BY_EXTENSION.keys()].sort()).toEqual([0, 1, 2, 3, 4]);
+    // Every extension is reachable from its sub-opcode, with no gaps and no
+    // two forms claiming the same one — a duplicate would make the decoder
+    // pick arbitrarily between them.
+    const keys = [...BY_EXTENSION.keys()].sort((a, b) => a - b);
+    expect(keys).toEqual(extensions.map((d) => d.ext!).sort((a, b) => a - b));
+    expect(new Set(keys).size).toBe(keys.length);
+    keys.forEach((key, index) => expect(key).toBe(index));
+  });
+
+  it("gives the output and remainder extensions a form per operand width", () => {
+    // The legacy engine emits the full value of whichever register is named at
+    // either width, and the shipped demos use `OUT AX` alongside `OUT BX`, so a
+    // single canonical size would reject programs the app already runs.
+    for (const mnem of ["OUT", "OUTC"]) {
+      expect(INSTRUCTION_TABLE.some((d) => d.mnem === mnem && d.ops[0] === "rm8")).toBe(true);
+      expect(INSTRUCTION_TABLE.some((d) => d.mnem === mnem && d.ops[0] === "rm16")).toBe(true);
+    }
+    expect(INSTRUCTION_TABLE.some((d) => d.mnem === "MOD" && d.ops[0] === "rm8")).toBe(true);
+    expect(INSTRUCTION_TABLE.some((d) => d.mnem === "MOD" && d.ops[0] === "rm16")).toBe(true);
+    // `IN r, imm8` for a register other than AL/AX is an 186 form; on an 8086
+    // the opcodes it would want are ADD AL/AX, imm8.
+    expect(INSTRUCTION_TABLE.some((d) => d.mnem === "IN" && d.ops[0] === "ax" && d.bytes[0] === 0xe5)).toBe(true);
+    for (const def of INSTRUCTION_TABLE.filter((d) => d.mnem === "IN" && d.ops[0].startsWith("rm"))) {
+      expect(def.bytes[0]).toBe(0x0f);
+    }
   });
 
   it("does not define 0x0F as a real instruction", () => {
