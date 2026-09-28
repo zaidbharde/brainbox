@@ -89,8 +89,8 @@ describe("Memory", () => {
       mem.mapRegion({
         start: 0xfff0,
         end: 0xffff,
-        read: (p) => 0x42,
-        write: (p, v) => seen.push([p, v]),
+        read: () => 0x42,
+        write: (address, v) => seen.push([address, v]),
       });
 
       expect(mem.readByte(0xfff5)).toBe(0x42);
