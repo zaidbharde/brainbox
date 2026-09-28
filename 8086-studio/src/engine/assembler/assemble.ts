@@ -405,7 +405,13 @@ function runStatement(ctx: PassContext, statement: Statement): void {
     if (tokens[1]?.kind === "punct" && tokens[1].text === ":") {
       label = tokens[0].text;
       i = 2;
-    } else if (!isDirective && !MNEMONICS.has(head) && !RESERVED.has(head) && !isRegisterName(head)) {
+    } else if (
+      !isDirective &&
+      !MNEMONICS.has(head) &&
+      !RESERVED.has(head) &&
+      REPEAT_PREFIX[head] === undefined &&
+      !isRegisterName(head)
+    ) {
       // Bare label: only when something follows it, and it is not a macro name
       // that has already been expanded away.
       // The next token decides. An instruction, PROC, a data directive, `[` or
@@ -461,6 +467,26 @@ function runStatement(ctx: PassContext, statement: Statement): void {
 
   if (rest[0].kind !== "ident") {
     ctx.diagnostics.error(line, rest[0].column, `expected a mnemonic, found ${JSON.stringify(rest[0].text)}`);
+    return;
+  }
+
+  // A repeat prefix sits in front of the mnemonic rather than beside it, so it
+  // has to be peeled off here. Without this, `REP MOVSW` silently assembles to
+  // a bare MOVSW that moves exactly one word -- a program that assembles
+  // cleanly and behaves wrongly, which is the worst failure mode there is.
+  const repeatByte = REPEAT_PREFIX[head];
+  const repeated = rest[1];
+  if (repeatByte !== undefined && repeated?.kind === "ident") {
+    const inner = repeated.text.toUpperCase();
+    if (!REPEATABLE.has(inner)) {
+      ctx.diagnostics.error(
+        repeated.line,
+        repeated.column,
+        `${head} only applies to a string instruction, not ${inner}`,
+      );
+      return;
+    }
+    assembleInstruction(ctx, statement, inner, rest.slice(2), [repeatByte]);
     return;
   }
 
@@ -796,11 +822,27 @@ function writeScalar(ctx: PassContext, elementSize: 8 | 16 | 32, value: number):
   if (elementSize === 16) ctx.current.putByte((value >> 8) & 0xff);
 }
 
+/** The string instructions a repeat prefix may legally precede. */
+const REPEATABLE = new Set([
+  "MOVSB", "MOVSW", "CMPSB", "CMPSW", "STOSB", "STOSW",
+  "LODSB", "LODSW", "SCASB", "SCASW",
+]);
+
+/** Mnemonic to the byte that encodes it. */
+const REPEAT_PREFIX: Readonly<Record<string, number>> = {
+  REP: 0xf3,
+  REPE: 0xf3,
+  REPZ: 0xf3,
+  REPNE: 0xf2,
+  REPNZ: 0xf2,
+};
+
 function assembleInstruction(
   ctx: PassContext,
   statement: Statement,
   mnemonic: string,
   operandTokens: readonly Token[],
+  prefix: readonly number[] = [],
 ): void {
   const { line, column } = statement;
   const start = ctx.current.counter;
@@ -838,6 +880,7 @@ function assembleInstruction(
     column,
     offset: start,
     unresolvedTarget: !allResolved,
+    ...(prefix.length === 0 ? {} : { prefix }),
   };
 
   const encoded = encode(request, ctx.diagnostics);

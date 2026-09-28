@@ -381,6 +381,61 @@ describe("assembler", () => {
     });
   });
 
+  describe("prefixes", () => {
+    it("emits a repeat prefix in front of the instruction", () => {
+      // The failure this guards against is silent: `REP MOVSW` without the F3
+      // still assembles to a valid `A5`, so a program runs and moves one word
+      // instead of CX of them. It has to be caught here, not in a debugger.
+      const result = assemble("REP MOVSW", { origin: 0x100 });
+      expect(result.errors).toEqual([]);
+      expect(result.sourceLines[0].offset).toBe(0x100);
+      expect(Array.from(result.image)).toEqual([0xf3, 0xa5]);
+    });
+
+    it("counts the prefix as bytes so labels land after it", () => {
+      const result = assemble("REP MOVSW\nhere:\nNOP", { origin: 0x100 });
+      expect(result.symbols.lookup("here")?.value).toBe(0x102);
+    });
+
+    it("maps REPE to F3 and REPNE to F2", () => {
+      expect(Array.from(assemble("REPE CMPSB", { origin: 0 }).image)).toEqual([0xf3, 0xa6]);
+      expect(Array.from(assemble("REPZ CMPSB", { origin: 0 }).image)).toEqual([0xf3, 0xa6]);
+      expect(Array.from(assemble("REPNE SCASB", { origin: 0 }).image)).toEqual([0xf2, 0xae]);
+      expect(Array.from(assemble("REPNZ SCASB", { origin: 0 }).image)).toEqual([0xf2, 0xae]);
+    });
+
+    it("rejects a prefix that is not followed by a mnemonic", () => {
+      expect(assemble("REP", { origin: 0 }).errors[0].message).toContain("unknown instruction");
+      expect(assemble("REP 5", { origin: 0 }).errors[0].message).toMatch(/mnemonic|REP/);
+    });
+
+    it("rejects a repeat on an instruction that cannot repeat", () => {
+      const result = assemble("REP MOV AX, 1", { origin: 0x100 });
+      expect(result.errors[0].message).toContain("string instruction");
+      expect(result.image.length).toBe(0);
+    });
+
+    it("does not mistake a repeat prefix for a bare label", () => {
+      // `REP` is not a mnemonic, so the bare-label heuristic used to swallow it
+      // and define a label called REP.
+      const result = assemble("REP MOVSW\nHLT", { origin: 0 });
+      expect(result.symbols.lookup("REP")).toBeUndefined();
+    });
+
+    it("still lets a label be called REP when it really is one", () => {
+      const result = assemble("REP:\nNOP\nJMP REP", { origin: 0x100 });
+      expect(result.errors).toEqual([]);
+      expect(result.symbols.lookup("REP")?.value).toBe(0x100);
+    });
+
+    it("keeps a segment override in front of the repeat prefix", () => {
+      const result = assemble("ES: REP MOVSB", { origin: 0x100 });
+      expect(Array.from(result.image)).toEqual([0xf3, 0xa4]);
+      // The override is encoded on the operand, not as a separate byte here.
+      expect(result.errors).toEqual([]);
+    });
+  });
+
   describe("listing and source map", () => {
     it("records the bytes and offset of every statement", () => {
       const result = assemble("MOV AX, 1\nHLT", { origin: 0x100 });

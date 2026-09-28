@@ -60,6 +60,8 @@ export interface DecodedInstruction {
   length: number;
   /** Segment override present in the byte stream, if any. */
   segmentOverride?: "ES" | "CS" | "SS" | "DS";
+  /** REP/REPE/REPNE prefix. `none` when the instruction is not repeated. */
+  repeat: "none" | "rep" | "repe" | "repne";
   /** Set when decoding failed. */
   error?: string;
   /** True when the instruction is a BrainBox 0x0F extension. */
@@ -112,6 +114,19 @@ class ByteReader {
   }
 }
 
+const PREFIX_REPEAT: Readonly<Record<number, "rep" | "repe" | "repne">> = {
+  0xf2: "repne",
+  0xf3: "repe",
+};
+
+/** The mnemonic a repeat prefix is written with. F3 serves as REP and REPE. */
+const REPEAT_TEXT: Readonly<Record<DecodedInstruction["repeat"], string>> = {
+  none: "",
+  rep: "REP",
+  repe: "REPE",
+  repne: "REPNE",
+};
+
 const PREFIX_SEGMENT: Readonly<Record<number, "ES" | "CS" | "SS" | "DS">> = {
   0x26: "ES",
   0x2e: "CS",
@@ -136,15 +151,26 @@ export function decode(bytes: Uint8Array, offset = 0): DecodedInstruction {
 export function decodeAt(bytes: Uint8Array, offset: number): DecodedInstruction {
   const reader = new ByteReader(bytes.subarray(offset, offset + DEFAULT_PROBE));
 
-  // Segment overrides may precede the opcode, more than once, and the last one
-  // wins. Peeking rather than consuming keeps the opcode byte for the matcher.
+  // Segment overrides and REP may precede the opcode, more than once, and the
+  // last of each kind wins. Peeking rather than consuming keeps the opcode byte
+  // for the matcher.
   let segmentOverride: "ES" | "CS" | "SS" | "DS" | undefined;
+  let repeat: "none" | "rep" | "repe" | "repne" = "none";
   for (;;) {
     const next = reader.peek();
     if (next === undefined) return truncated();
     const named = PREFIX_SEGMENT[next];
-    if (named === undefined) break;
-    segmentOverride = named;
+    if (named !== undefined) {
+      segmentOverride = named;
+      reader.u8();
+      continue;
+    }
+    const repeated = PREFIX_REPEAT[next];
+    if (repeated === undefined) break;
+    // F3 on its own is REP, and REPE only where a compare is meaningful; a
+    // disassembler cannot know which instruction follows, so it reports the
+    // name the manual uses and lets the CPU decide.
+    repeat = repeated;
     reader.u8();
   }
 
@@ -155,7 +181,7 @@ export function decodeAt(bytes: Uint8Array, offset: number): DecodedInstruction 
   if (first === 0x0f) {
     const sub = reader.u8();
     if (sub === undefined) return truncated();
-    return decodeExtension(sub, reader, segmentOverride);
+    return decodeExtension(sub, reader, segmentOverride, repeat);
   }
 
   const candidates = BY_OPCODE.get(first);
@@ -167,6 +193,7 @@ export function decodeAt(bytes: Uint8Array, offset: number): DecodedInstruction 
       operands: [{ kind: "imm", value: first, size: 8 }],
       length: reader.position,
       segmentOverride,
+      repeat,
       error: `no instruction for opcode ${hex(first)}`,
     };
   }
@@ -190,6 +217,7 @@ export function decodeAt(bytes: Uint8Array, offset: number): DecodedInstruction 
         operands: [],
         length: reader.position,
         segmentOverride,
+        repeat,
         error: `opcode ${hex(first)} has no /${reg} form`,
       };
     }
@@ -203,13 +231,14 @@ export function decodeAt(bytes: Uint8Array, offset: number): DecodedInstruction 
     if (byRegister) def = byRegister;
   }
 
-  return buildInstruction(def, reader, segmentOverride);
+  return buildInstruction(def, reader, segmentOverride, repeat);
 }
 
 function decodeExtension(
   sub: number,
   reader: ByteReader,
   segmentOverride: "ES" | "CS" | "SS" | "DS" | undefined,
+  repeat: "none" | "rep" | "repe" | "repne",
 ): DecodedInstruction {
   const def = INSTRUCTION_TABLE.find((d) => d.ext === sub);
   if (def === undefined) {
@@ -220,16 +249,18 @@ function decodeExtension(
       operands: [],
       length: reader.position,
       segmentOverride,
+      repeat,
       error: `no BrainBox extension for 0F ${hex(sub)}`,
     };
   }
-  return buildInstruction(def, reader, segmentOverride);
+  return buildInstruction(def, reader, segmentOverride, repeat);
 }
 
 function buildInstruction(
   def: InsnDef,
   reader: ByteReader,
   segmentOverride: "ES" | "CS" | "SS" | "DS" | undefined,
+  repeat: "none" | "rep" | "repe" | "repne",
 ): DecodedInstruction {
   const startLength = reader.position;
   const operands: DecodedOperand[] = new Array(def.ops.length);
@@ -274,10 +305,10 @@ function buildInstruction(
     }
 
     if (shape.mod3Only && !decoded.register) {
-      return failure(def, reader, segmentOverride, startLength, "requires a register operand");
+      return failure(def, reader, segmentOverride, repeat, startLength, "requires a register operand");
     }
     if (shape.mod3Forbidden && decoded.register) {
-      return failure(def, reader, segmentOverride, startLength, "does not accept a register operand");
+      return failure(def, reader, segmentOverride, repeat, startLength, "does not accept a register operand");
     }
   }
 
@@ -333,9 +364,9 @@ function buildInstruction(
     }
     if (type === "r8") {
       // Not bound by opcodeReg (no such table entry), so it cannot be decoded.
-      return failure(def, reader, segmentOverride, startLength, `cannot decode operand ${slot}`);
+      return failure(def, reader, segmentOverride, repeat, startLength, `cannot decode operand ${slot}`);
     }
-    return failure(def, reader, segmentOverride, startLength, `cannot decode operand ${slot}`);
+    return failure(def, reader, segmentOverride, repeat, startLength, `cannot decode operand ${slot}`);
   }
 
   // A displacement is relative to the end of the instruction, so the target
@@ -370,10 +401,17 @@ function buildInstruction(
     ok: true,
     def,
     mnem: def.mnem,
-    text: formatInstruction(def.mnem, operands),
+    // The repeat prefix has to reach the text, not just the `repeat` field:
+    // without it the text would re-assemble to a bare MOVSW, which is a valid
+    // program that quietly does the wrong thing.
+    text:
+      repeat === "none"
+        ? formatInstruction(def.mnem, operands)
+        : `${REPEAT_TEXT[repeat]} ${formatInstruction(def.mnem, operands)}`,
     operands,
     length: reader.position,
     segmentOverride,
+    repeat,
     extension: def.ext,
   };
 }
@@ -500,6 +538,7 @@ function truncated(atLeast = 1): DecodedInstruction {
     text: "?",
     operands: [],
     length: Math.max(atLeast, 1),
+    repeat: "none",
     error: "instruction runs past the end of the available bytes",
   };
 }
@@ -508,6 +547,7 @@ function failure(
   def: InsnDef,
   reader: ByteReader,
   segmentOverride: "ES" | "CS" | "SS" | "DS" | undefined,
+  repeat: "none" | "rep" | "repe" | "repne",
   startLength: number,
   message: string,
 ): DecodedInstruction {
@@ -519,6 +559,7 @@ function failure(
     operands: [],
     length: Math.max(reader.position, startLength),
     segmentOverride,
+    repeat,
     error: message,
   };
 }

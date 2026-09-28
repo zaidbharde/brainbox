@@ -135,6 +135,48 @@ describe("decode: segment overrides", () => {
   });
 });
 
+describe("decode: repeat prefixes", () => {
+  it("keeps the prefix, and counts it in the length", () => {
+    // The dangerous failure here is not a wrong decode but a dropped prefix:
+    // `F3 A5` would still be a valid MOVSW, and a CPU that ignored `repeat`
+    // would move exactly one word and never know it was wrong.
+    const result = decode(new Uint8Array([0xf3, 0xa5]));
+    expect(result.ok).toBe(true);
+    expect(result.repeat).toBe("repe");
+    expect(result.mnem).toBe("MOVSW");
+    expect(result.length).toBe(2);
+  });
+
+  it("distinguishes REP/REPE from REPNE/REPNZ", () => {
+    expect(decode(new Uint8Array([0xf2, 0xae])).repeat).toBe("repne");
+    expect(decode(new Uint8Array([0xf3, 0xae])).repeat).toBe("repe");
+  });
+
+  it("reports no prefix when there is none", () => {
+    expect(decode(new Uint8Array([0xa5])).repeat).toBe("none");
+  });
+
+  it("reads a segment override and a repeat prefix together", () => {
+    // Real code does this: `REP MOVSB` on an overridden segment.
+    const result = decode(new Uint8Array([0x26, 0xf3, 0xa4]));
+    expect(result.repeat).toBe("repe");
+    expect(result.segmentOverride).toBe("ES");
+    expect(result.length).toBe(3);
+  });
+
+  it("round-trips the prefixed text back to the prefixed bytes", () => {
+    const decoded = decode(new Uint8Array([0xf3, 0xab]));
+    expect(decoded.ok).toBe(true);
+    expect(decoded.text).toBe("REPE STOSW");
+    const back = assemble(decoded.text, { origin: 0 });
+    expect(Array.from(back.image)).toEqual([0xf3, 0xab]);
+  });
+
+  it("still reports truncation when only the prefix is present", () => {
+    expect(decode(new Uint8Array([0xf3])).ok).toBe(false);
+  });
+});
+
 describe("decode: extensions", () => {
   it("decodes a BrainBox extension", () => {
     const result = decode(new Uint8Array([0x0f, 0x05, 0xc3]));

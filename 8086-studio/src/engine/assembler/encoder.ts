@@ -33,6 +33,12 @@ export function canonicalMnemonic(mnemonic: string): string {
 
 export interface EncodeRequest {
   mnemonic: string;
+  /**
+   * Bytes emitted before the opcode: REP/REPE/REPNE and LOCK. These are part
+   * of the instruction's length, which matters because a prefix shifts every
+   * address after it.
+   */
+  prefix?: readonly number[];
   operands: readonly Operand[];
   line: number;
   column: number;
@@ -211,7 +217,7 @@ function dispSizeFor(def: InsnDef, request: EncodeRequest): number {
 
 /** Structural size in bytes, including ModR/M, displacement and immediates. */
 export function encodedSize(def: InsnDef, request: EncodeRequest): number {
-  let size = def.bytes.length;
+  let size = def.bytes.length + (request.prefix?.length ?? 0);
   if (def.modrm) size += 1 + dispSizeFor(def, request);
   if (def.imm) size += def.imm.size / 8;
   if (def.imm2) size += def.imm2.size / 8;
@@ -319,8 +325,8 @@ function describeOperand(operand: Operand): string {
 /** Emit the bytes for a chosen definition. */
 export function emit(def: InsnDef, request: EncodeRequest, diagnostics: DiagnosticBag): number[] {
   const { operands } = request;
-  const bytes: number[] = [...def.bytes];
-  let prefix: number | undefined;
+  const bytes: number[] = [...(request.prefix ?? []), ...def.bytes];
+  let segmentPrefix: number | undefined;
 
   const m = def.modrm;
   if (m) {
@@ -363,7 +369,7 @@ export function emit(def: InsnDef, request: EncodeRequest, diagnostics: Diagnost
     // and `mov ax,[si]` must assemble identically.
     if (rmOperand?.kind === "mem" && rmOperand.address.segment) {
       if (rmOperand.address.segment !== defaultSegment(rmOperand.address)) {
-        prefix = SEGMENT_PREFIX[rmOperand.address.segment];
+        segmentPrefix = SEGMENT_PREFIX[rmOperand.address.segment];
       }
     }
   }
@@ -421,7 +427,7 @@ export function emit(def: InsnDef, request: EncodeRequest, diagnostics: Diagnost
     bytes.push(0, 0);
   }
 
-  if (prefix !== undefined) bytes.unshift(prefix);
+  if (segmentPrefix !== undefined) bytes.unshift(segmentPrefix);
   return bytes;
 }
 
