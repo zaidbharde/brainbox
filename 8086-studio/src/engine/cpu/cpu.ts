@@ -893,7 +893,26 @@ export class Cpu {
       }
 
       case "MOD": {
-        // Remainder, for teaching division. DX is ignored and no flag changes.
+        // Remainder, for teaching division. The dividend is the accumulator at
+        // the operand's width -- AL for the byte form, AX for the word form,
+        // not DX:AX as for DIV -- the remainder lands in the same place, and no
+        // flag is touched.
+        const operand = this.readOperand(ops[0]);
+        const bits = this.operandWidth(ops[0]);
+        const mask = maskFor(bits);
+        if (operand === 0) {
+          this.state.halted = true;
+          this.state.error = "Division by zero";
+          return;
+        }
+        const dividend = bits === 8 ? this.readReg8(0) : this.getAccumulator();
+        // JavaScript's % already truncates toward zero, which is what the 8086
+        // does. The dividend is the raw masked value rather than a signed one,
+        // because that is what the legacy emulator computes and the lab's
+        // output has to match it exactly.
+        const result = dividend % operand & mask;
+        if (bits === 8) this.setAL(result);
+        else this.setAccumulator(result);
         return;
       }
 
@@ -1212,16 +1231,38 @@ export class Cpu {
     const mnem = instruction.mnem;
     const repeat = instruction.repeat;
     const width = mnem.endsWith("W") ? 16 : 8;
-    const mask = maskFor(width);
-    const doRepeat = repeat !== "none";
-    const iterations = doRepeat ? this.state.CX & mask : 1;
 
-    for (let i = 0; i < iterations; i++) {
+    // The count is the whole of CX on an 8086, for byte instructions as well as
+    // word ones. Masking it down to the operand size is a 386 in protected mode
+    // behaviour, and getting it wrong turns a 256-byte copy into a no-op.
+    //
+    // A count of zero means the instruction does nothing at all, not one pass
+    // followed by a check. "Run once, then count down" is a tempting way to
+    // write this and it is observable.
+    if (repeat !== "none" && this.state.CX === 0) return;
+
+    // The condition belongs to the compares, not to the prefix: REP and REPE are
+    // the same byte, and F3 in front of a MOVS means "repeat unconditionally".
+    // Only CMPS and SCAS write the ZF the loop is testing, so gating on the
+    // prefix alone would let a stale ZF end a REP MOVSB after one pass.
+    const compares = mnem.startsWith("CMPS") || mnem.startsWith("SCAS");
+    const conditional = compares && (repeat === "repe" || repeat === "repne");
+
+    for (;;) {
       if (!this.stringStep(mnem, width)) return;
-      if (!doRepeat) break;
+      if (repeat === "none") return;
+      // CX counts down as the passes happen rather than being corrected at the
+      // end, so an interrupt or a debugger in the middle sees the iterations
+      // that really occurred.
+      this.state.CX = wrap16(this.state.CX - 1);
+      if (conditional) {
+        const equal = getFlag(this.state.FLAGS, "ZF");
+        // REPE stops on the pass that made the operands unequal, REPNE on the
+        // pass that made them equal. Either way that pass has already happened.
+        if (repeat === "repe" ? !equal : equal) return;
+      }
+      if (this.state.CX === 0) return;
     }
-
-    if (doRepeat) this.state.CX = wrap16(this.state.CX - (iterations & mask));
   }
 
   private stringStep(mnem: string, width: Width): boolean {

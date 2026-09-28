@@ -419,6 +419,76 @@ describe("string instructions", () => {
     expect(h.reg("CX")).toBe(0);
   });
 
+  it("counts the whole of CX for a byte instruction", () => {
+    // Masking the count down to the operand size is 386 protected-mode
+    // behaviour. On an 8086 CX is the counter whatever the operand size, so
+    // 256 is a real count and not a truncated zero.
+    const memory = new Memory();
+    memory.setRaw(ORIGIN + 3, 0xb9); memory.setRaw(ORIGIN + 4, 0x00); memory.setRaw(ORIGIN + 5, 0x01);
+    memory.setRaw(ORIGIN + 6, 0xf3); memory.setRaw(ORIGIN + 7, 0xa4);
+    memory.setRaw(ORIGIN + 8, 0xf4);
+    const cpu = new Cpu(memory, { ...createInitialState(), IP: ORIGIN + 3 });
+    cpu.run(3000);
+    expect(cpu.readReg16("CX")).toBe(0);
+    expect(cpu.state.SI).toBe(256);
+  });
+
+  it("does nothing at all when the count is zero", () => {
+    // Not one pass followed by a check: no pass, so SI does not move.
+    const h = com("MOV CX, 0\nREP MOVSB\nHLT").run();
+    expect(h.reg("SI")).toBe(0);
+    expect(h.reg("DI")).toBe(0);
+  });
+
+  it("stops REPE on the pass that makes the operands unequal", () => {
+    // DS:SI is "AB", ES:DI is "AB": two equal passes, then a difference on the
+    // third, which is the pass that ends the loop.
+    const memory = new Memory();
+    memory.setRaw(0x200, 0x41); memory.setRaw(0x201, 0x42); memory.setRaw(0x202, 0x43);
+    memory.setRaw(0x300, 0x41); memory.setRaw(0x301, 0x42);
+    memory.setRaw(ORIGIN + 3, 0xb9); memory.setRaw(ORIGIN + 4, 0x0a); memory.setRaw(ORIGIN + 5, 0x00);
+    memory.setRaw(ORIGIN + 6, 0xbe); memory.setRaw(ORIGIN + 7, 0x00); memory.setRaw(ORIGIN + 8, 0x02);
+    memory.setRaw(ORIGIN + 9, 0xbf); memory.setRaw(ORIGIN + 10, 0x00); memory.setRaw(ORIGIN + 11, 0x03);
+    memory.setRaw(ORIGIN + 12, 0xf3); memory.setRaw(ORIGIN + 13, 0xa6);
+    memory.setRaw(ORIGIN + 14, 0xf4);
+    const cpu = new Cpu(memory, { ...createInitialState(), IP: ORIGIN + 3 });
+    cpu.run(50);
+    // Three passes happened and the fourth did not, so CX is 7.
+    expect(cpu.readReg16("CX")).toBe(7);
+    expect(cpu.state.SI).toBe(0x203);
+    expect(cpu.state.DI).toBe(0x303);
+  });
+
+  it("stops REPNE on the pass that makes the operands equal", () => {
+    const memory = new Memory();
+    memory.setRaw(0x200, 0x41); memory.setRaw(0x201, 0x41); memory.setRaw(0x202, 0x99);
+    memory.setRaw(0x300, 0x42); memory.setRaw(0x301, 0x42); memory.setRaw(0x302, 0x99);
+    memory.setRaw(ORIGIN + 3, 0xb9); memory.setRaw(ORIGIN + 4, 0x0a); memory.setRaw(ORIGIN + 5, 0x00);
+    memory.setRaw(ORIGIN + 6, 0xbe); memory.setRaw(ORIGIN + 7, 0x00); memory.setRaw(ORIGIN + 8, 0x02);
+    memory.setRaw(ORIGIN + 9, 0xbf); memory.setRaw(ORIGIN + 10, 0x00); memory.setRaw(ORIGIN + 11, 0x03);
+    memory.setRaw(ORIGIN + 12, 0xf2); memory.setRaw(ORIGIN + 13, 0xa6);
+    memory.setRaw(ORIGIN + 14, 0xf4);
+    const cpu = new Cpu(memory, { ...createInitialState(), IP: ORIGIN + 3 });
+    cpu.run(50);
+    // Two unequal passes, then the match that ends it.
+    expect(cpu.readReg16("CX")).toBe(7);
+    expect(cpu.state.SI).toBe(0x203);
+    expect(cpu.state.DI).toBe(0x303);
+  });
+
+  it("keeps going for REP on a move, which writes no flags", () => {
+    // The condition only applies to the compares; MOVS consults nothing, so it
+    // runs the full count even though ZF says otherwise.
+    const memory = new Memory();
+    memory.setRaw(ORIGIN + 3, 0xb9); memory.setRaw(ORIGIN + 4, 0x05); memory.setRaw(ORIGIN + 5, 0x00);
+    memory.setRaw(ORIGIN + 6, 0xf3); memory.setRaw(ORIGIN + 7, 0xa4);
+    memory.setRaw(ORIGIN + 8, 0xf4);
+    const cpu = new Cpu(memory, { ...createInitialState(), IP: ORIGIN + 3 });
+    cpu.run(50);
+    expect(cpu.readReg16("CX")).toBe(0);
+    expect(cpu.state.SI).toBe(5);
+  });
+
   it("runs backwards once DF is set", () => {
     const h = com(
       "STD\nMOV SI, 204h\nMOV DI, 304h\nMOV CX, 2\nREP MOVSW\nHLT",
@@ -496,6 +566,31 @@ describe("ports and output", () => {
     const cpu = new Cpu(memory, { ...createInitialState(), IP: ORIGIN });
     cpu.run(100);
     expect(cpu.readReg16("AX")).toBe(0xbeef);
+  });
+
+  it("leaves the remainder in AL and touches no flag", () => {
+    // MOD is the teaching version of division: the remainder goes to AX/AL,
+    // DX is ignored, and the flags are left exactly as they were.
+    const h = com("STC\nMOV AX, 0FFFFh\nMOV CL, 10\nMOD CL\nHLT").run();
+    expect(AL(h)).toBe(0xff % 10);
+    expect(flag(h, "CF")).toBe(true);
+  });
+
+  it("divides AL alone for the byte form of MOD", () => {
+    // Not AX % BL: the dividend is the accumulator at the operand's width, so
+    // the high byte of AX is not part of it.
+    const h = com("MOV AX, 0FF00h\nMOV AL, 19h\nMOV BL, 5\nMOD BL\nHLT").run();
+    expect(AL(h)).toBe(0x19 % 5);
+  });
+
+  it("divides AX for the word form of MOD", () => {
+    const h = com("MOV AX, 0FFFBh\nMOV BX, 5\nMOD BX\nHLT").run();
+    expect(AX(h)).toBe(0xfffb % 5);
+  });
+
+  it("reports division by zero for MOD", () => {
+    const h = com("MOV AX, 10\nMOV BX, 0\nMOD BX\nHLT").run();
+    expect(h.cpu.state.error).toContain("Division by zero");
   });
 
   it("records a number for OUT", () => {
