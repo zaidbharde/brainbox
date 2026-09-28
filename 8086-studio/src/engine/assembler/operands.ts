@@ -38,7 +38,17 @@ export type Operand =
       column: number;
     }
   | { kind: "imm"; value: number; resolved: boolean; line: number; column: number; text: string }
-  | { kind: "target"; value: number; resolved: boolean; line: number; column: number; text: string };
+  | {
+      kind: "target";
+      value: number;
+      resolved: boolean;
+      line: number;
+      column: number;
+      text: string;
+      /** `SHORT`/`NEAR` from the source. Without it the encoder takes the
+       *  narrowest form that reaches. */
+      distance?: "short" | "near";
+    };
 
 const IMPLIED = new Map<string, "ax" | "dx" | "cl" | "one" | "three">([
   ["AX", "ax"],
@@ -91,12 +101,18 @@ function parseOneOperand(
   let size: 8 | 16 | undefined;
   let sizeExplicit = false;
   let segment: MemAddress["segment"];
+  let distance: "short" | "near" | undefined;
 
-  // BYTE / WORD PTR
+  // BYTE / WORD PTR, and SHORT / NEAR on a branch target
   for (;;) {
     const token = parser.peek();
     if (!token || token.kind !== "ident") break;
     const upper = token.text.toUpperCase();
+    if (upper === "SHORT" || upper === "NEAR") {
+      distance = upper === "SHORT" ? "short" : "near";
+      parser.position++;
+      continue;
+    }
     if (upper === "BYTE" || upper === "WORD") {
       size = upper === "BYTE" ? 8 : 16;
       sizeExplicit = true;
@@ -208,6 +224,7 @@ function parseOneOperand(
       line: first.line,
       column: first.column,
       text: sourceText(tokens, before, after),
+      ...(distance === undefined ? {} : { distance }),
     };
   }
   return {

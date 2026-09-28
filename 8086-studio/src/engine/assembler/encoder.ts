@@ -221,6 +221,14 @@ export function encodedSize(def: InsnDef, request: EncodeRequest): number {
   return size;
 }
 
+/** `SHORT`/`NEAR` written on the operand, if any. */
+function requestedDistance(request: EncodeRequest): "short" | "near" | undefined {
+  for (const operand of request.operands) {
+    if (operand.kind === "target" && operand.distance !== undefined) return operand.distance;
+  }
+  return undefined;
+}
+
 /** The displacement a `rel` form would encode, given the definition. */
 function displacementFor(def: InsnDef, request: EncodeRequest): number {
   if (!def.rel) return 0;
@@ -237,8 +245,19 @@ function displacementFor(def: InsnDef, request: EncodeRequest): number {
  * would emit an `eb` whose displacement silently wraps.
  */
 export function selectEncoding(request: EncodeRequest): InsnDef | undefined {
-  const candidates = findCandidates(request);
+  let candidates = findCandidates(request);
   if (candidates.length === 0) return undefined;
+
+  // `JMP NEAR label` asks for the 16-bit displacement even when the target is
+  // close enough for the 8-bit one. The size rule below would otherwise always
+  // pick the short form, and a disassembler could not describe a near jump at
+  // all. Range checking still applies: a forced form that cannot reach is an
+  // error, not a truncated displacement.
+  const distance = requestedDistance(request);
+  if (distance !== undefined) {
+    const filtered = candidates.filter((d) => d.rel?.size === (distance === "short" ? 8 : 16));
+    if (filtered.length > 0) candidates = filtered;
+  }
 
   let best = candidates[0];
   let bestSize = encodedSize(best, request);
