@@ -345,6 +345,25 @@ describe("assembler", () => {
       expect(errorsOf(result).join()).toContain("undefined symbol NOWHERE");
     });
 
+    it("reads an instruction operand as a symbol, not as a directive", () => {
+      // `END` is a directive, and `CODE SEGMENT` is a directive that carries a
+      // name. Those two facts used to combine into a rule that swallowed any
+      // instruction whose first operand was one of those words: `JMP end` was
+      // read as "the name JMP, then the END directive" and vanished, emitting
+      // neither a byte nor a diagnostic. A mnemonic in the first position is
+      // what tells the two apart.
+      expect(errorsOf(assemble("JMP nowhere\nHLT", { origin: 0 })).join()).toContain(
+        "undefined symbol NOWHERE",
+      );
+      // A label called END is still legal, and the jump over the five bytes of
+      // `MOV AX,1` still works.
+      const labelled = assemble("JMP end\nMOV AX, 1\nend: HLT", { origin: 0 });
+      expect(errorsOf(labelled)).toEqual([]);
+      expect([...labelled.image]).toEqual([0xeb, 0x03, 0xb8, 0x01, 0x00, 0xf4]);
+      // The directive forms are unaffected.
+      expect(errorsOf(assemble("CODE SEGMENT\nCODE ENDS", { origin: 0 }))).toEqual([]);
+    });
+
     it("rejects an operand shape the instruction cannot take", () => {
       const result = assemble("MOV AX, BX, CX", { origin: 0 });
       expect(errorsOf(result).join()).toContain("no encoding of MOV accepts");

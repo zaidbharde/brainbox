@@ -389,7 +389,13 @@ function runStatement(ctx: PassContext, statement: Statement): void {
   // right place, and stops `CODE` from being read as a bare label.
   let leadingName: string | undefined;
   if (tokens[0]?.kind === "ident" && tokens[1]?.kind === "ident") {
-    if (TAKES_PRECEDING_NAME.has(tokens[1].text.toUpperCase())) {
+    // `CODE SEGMENT` is a directive that carries a name. An *instruction* whose
+    // first operand happens to be one of those words is not: `JMP end` is a jump
+    // to a label called END, and treating it as "the name JMP, then the END
+    // directive" swallows the whole instruction without a byte or a diagnostic.
+    // A mnemonic in the first position settles it -- directives have no
+    // mnemonic of their own.
+    if (TAKES_PRECEDING_NAME.has(tokens[1].text.toUpperCase()) && !MNEMONICS.has(tokens[0].text.toUpperCase())) {
       leadingName = tokens[0].text;
       tokens = tokens.slice(1);
     } else if (tokens[1].text.toUpperCase() === "PROC") {
