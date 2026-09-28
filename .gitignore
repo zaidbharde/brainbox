@@ -4,3 +4,16 @@ backend/node_modules/
 8086-studio/node_modules/
 8086-studio/dist/
 *.log
+
+# Gradle / JVM build output (backend/android-box)
+backend/android-box/**/build/
+backend/android-box/**/.gradle/
+local.properties
+
+# Editor / OS junk
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+Thumbs.db
