@@ -6,10 +6,12 @@
  * a single flat byte array is unambiguously correct, and getting it wrong makes
  * a failing test ambiguous about which of the two things is at fault.
  *
- * The differential tests in test/cpu-differential.test.ts cover the interaction
- * between instructions. These cover each instruction against the architecture
- * manual, which is the only way to catch a flag rule that both engines happen to
- * get wrong in the same way.
+ * The differential tests in src/engine/cpu/differential.test.ts cover the
+ * interaction between instructions. These cover each instruction against the
+ * architecture manual, which is the only way to catch a flag rule that both
+ * engines happen to get wrong in the same way. The one thing they cannot be is
+ * the authority: for flags that is flags-conformance.test.ts, which scores both
+ * engines against rules written from the definitions.
  */
 
 import { describe, expect, it } from "vitest";
@@ -195,6 +197,75 @@ describe("arithmetic and flags", () => {
   it("wraps at the 8-bit boundary", () => {
     const h = com("MOV AL, 0FFh\nINC AL\nHLT").run();
     expect(AL(h)).toBe(0);
+  });
+});
+
+describe("8-bit flags, where the legacy emulator is not the 8086", () => {
+  // Each of these is a case the legacy gets wrong, found by scoring both engines
+  // over 2048 ALU programs in flags-conformance.test.ts. They are here under
+  // their own names because they are the ones that mislead: a differential test
+  // cannot fail on them, since the legacy is the other party. The rule in each
+  // case is the architecture's, and the expected value can be checked by hand.
+  it("takes SF from bit 7 of an 8-bit addition", () => {
+    // 7F + 1 is 80h: negative in eight bits, and the 8086 says so even though
+    // nothing reached bit 15. The legacy leaves SF clear.
+    const h = com("MOV AL, 7Fh\nADD AL, 1\nHLT").run();
+    expect(AL(h)).toBe(0x80);
+    expect(flag(h, "SF")).toBe(true);
+  });
+
+  it("takes SF from bit 7 of an 8-bit OR and XOR", () => {
+    const or = com("MOV AL, 12h\nOR AL, 80h\nHLT").run();
+    expect(AL(or)).toBe(0x92);
+    expect(flag(or, "SF")).toBe(true);
+    const xor = com("MOV AL, 12h\nXOR AL, 80h\nHLT").run();
+    expect(AL(xor)).toBe(0x92);
+    expect(flag(xor, "SF")).toBe(true);
+  });
+
+  it("takes SF from bit 7 of an 8-bit CMP", () => {
+    // CMP discards the difference but not its flags: 0 - 1 is -1 in eight bits.
+    const h = com("MOV AL, 0\nCMP AL, 1\nHLT").run();
+    expect(AL(h)).toBe(0);
+    expect(flag(h, "SF")).toBe(true);
+    expect(flag(h, "CF")).toBe(true);
+  });
+
+  it("reports overflow on an 8-bit subtraction of opposite signs", () => {
+    // 80h - 1 is 7Fh: the sign flipped, so the answer is out of range.
+    const h = com("MOV AL, 80h\nSUB AL, 1\nHLT").run();
+    expect(AL(h)).toBe(0x7f);
+    expect(flag(h, "OF")).toBe(true);
+    expect(flag(h, "SF")).toBe(false);
+  });
+
+  it("carries into AF when ADC is given a set carry", () => {
+    // FFh + 0 + 1 = 100h, so the byte is 00h with a carry out of bit 7, and out
+    // of bit 3 as well, which is AF. Landing on zero also sets ZF.
+    const h = com("STC\nMOV AL, 0FFh\nADC AL, 0\nHLT").run();
+    expect(AL(h)).toBe(0x00);
+    expect(flag(h, "CF")).toBe(true);
+    expect(flag(h, "AF")).toBe(true);
+    expect(flag(h, "ZF")).toBe(true);
+  });
+
+  it("borrows from AF when SBB is given a set carry", () => {
+    // 0 - 0 - 1 borrows, and the borrow counts as the auxiliary carry.
+    const h = com("STC\nMOV AL, 0\nSBB AL, 0\nHLT").run();
+    expect(AL(h)).toBe(0xff);
+    expect(flag(h, "CF")).toBe(true);
+    expect(flag(h, "AF")).toBe(true);
+  });
+
+  it("takes SF from bit 7 of an 8-bit shift", () => {
+    // 40h shifted left is 80h, which is negative in eight bits. The legacy
+    // leaves SF clear after every 8-bit shift, whatever the result.
+    const h = com("MOV AL, 40h\nSHL AL, 1\nHLT").run();
+    expect(AL(h)).toBe(0x80);
+    expect(flag(h, "SF")).toBe(true);
+    const sign = com("MOV AL, 80h\nSAR AL, 1\nHLT").run();
+    expect(AL(sign)).toBe(0xc0);
+    expect(flag(sign, "SF")).toBe(true);
   });
 });
 
@@ -548,14 +619,23 @@ describe("BCD adjust", () => {
 });
 
 describe("ports and output", () => {
-  it("writes a byte to a port", () => {
+  it("captures a byte written to a port without touching the port window", () => {
+    // OUT is the lab's "show this value" instruction: it appends to the output
+    // stream and leaves the port itself alone. OUTP is the one that writes.
     const h = com("MOV AL, 42h\nOUT 30h, AL\nHLT").run();
-    expect(h.memory.read8(0, 0x300 + 0x30 * 2)).toBe(0x42);
+    expect(h.cpu.output).toEqual([{ type: "number", value: 0x42 }]);
+    expect(h.memory.read8(0, 0x300 + 0x30 * 2)).toBe(0);
   });
 
-  it("writes a word through DX", () => {
+  it("captures a word written through DX", () => {
     const h = com("MOV AX, 1234h\nMOV DX, 20h\nOUT DX, AX\nHLT").run();
-    expect(h.memory.read16(0, 0x300 + 0x20 * 2)).toBe(0x1234);
+    expect(h.cpu.output).toEqual([{ type: "number", value: 0x1234 }]);
+    expect(h.memory.read16(0, 0x300 + 0x20 * 2)).toBe(0);
+  });
+
+  it("writes a word to the port window for OUTP", () => {
+    const h = com("MOV AL, 42h\nOUTP 30h, AL\nHLT").run();
+    expect(h.memory.read8(0, 0x300 + 0x30 * 2)).toBe(0x42);
   });
 
   it("reads a word from a port", () => {
@@ -623,7 +703,9 @@ describe("interrupts", () => {
   });
 
   it("emits a character for INT 21h AH=02", () => {
-    const h = com("MOV AH, 2\nMOV AL, 5Ah\nINT 21h\nHLT").run();
+    // AH=02 prints DL, not AL. The legacy took DL and the lab's own programs
+    // put the character there, so matching it keeps their output correct.
+    const h = com("MOV AH, 2\nMOV DL, 5Ah\nINT 21h\nHLT").run();
     expect(h.cpu.output).toEqual([{ type: "char", value: 0x5a }]);
   });
 

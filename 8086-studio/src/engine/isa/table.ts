@@ -495,6 +495,30 @@ function buildTable(): InsnDef[] {
     { mnem: "IRET", ops: ["none"], bytes: [0xcf], flags: ["OF", "SF", "ZF", "AF", "PF", "CF", "DF", "IF", "TF"] },
   );
 
+  // -- 0xC0-0xC1: shift/rotate by an immediate ---------------------------
+  // Without these `shl ax,4` has no encoding at all, which is not a corner
+  // case: it is the form people write when the count is a constant.
+  for (const op of SHIFT) {
+    table.push({
+      mnem: op.mnem,
+      ops: ["rm8", "imm8"],
+      bytes: [0xc0],
+      modrm: { digit: op.digit, rm: 0 },
+      imm: { slot: 1, size: 8 },
+      flags: SHIFT_FLAGS,
+      ...(op.note ? { note: op.note } : {}),
+    });
+    table.push({
+      mnem: op.mnem,
+      ops: ["rm16", "imm8"],
+      bytes: [0xc1],
+      modrm: { digit: op.digit, rm: 0 },
+      imm: { slot: 1, size: 8 },
+      flags: SHIFT_FLAGS,
+      ...(op.note ? { note: op.note } : {}),
+    });
+  }
+
   // -- 0xD0-0xD3: shift/rotate group -------------------------------------
   for (const op of SHIFT) {
     table.push({

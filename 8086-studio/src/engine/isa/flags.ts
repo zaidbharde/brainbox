@@ -310,9 +310,16 @@ export function shiftStep(
   }
 }
 
-/** The 8086 masks a variable shift count with 0x1F; 0 then means 0 iterations. */
-export function effectiveShiftCount(count: number, bits: Width): number {
-  return (count & 0x1f) === 0 ? 0 : (count & 0x1f) % bits;
+/**
+ * The 8086 masks a shift count to five bits and stops there, for byte operands
+ * as well as word ones. It does *not* narrow the count to the operand width, so
+ * `shl al,9` really is nine shifts and the result is zero, rather than the
+ * one-bit shift an 80186 and later would perform. That 3-bit rule for bytes is
+ * later silicon, so it is not implemented here. The legacy agrees, which is
+ * checked by the `shl al,9` program in the differential test.
+ */
+export function effectiveShiftCount(count: number): number {
+  return count & 0x1f;
 }
 
 /** ASCII adjust after ADD/INC AL,AB (DAA-style core used by AAA/AAS). */

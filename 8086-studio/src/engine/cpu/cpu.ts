@@ -356,18 +356,34 @@ export class Cpu {
         case 0x4c:
           this.state.halted = true;
           return;
+        // The character comes from DL, not AL. That is what the shipped
+        // emulator does, and programs in the lab were written against it, so
+        // matching the manual here would change what existing programs print.
         case 0x02:
-          this.output.push({ type: "char", value: this.readReg8(0) });
+          this.output.push({ type: "char", value: this.readReg8(2) });
           return;
         case 0x09: {
-          const ds = this.segment("DS");
-          let address = this.state.DX & WORD;
-          for (;;) {
-            const value = this.read8(ds, address);
+          // The '$'-terminated string starts at DX, and the address is used
+          // as-is rather than through DS: the lab's memory is flat here.
+          //
+          // The scan is bounded at one segment's worth of bytes. An
+          // unterminated string is a bug in the program, and without a bound it
+          // is also a bug in the CPU: 16-bit wraparound would come back to the
+          // start and read the same bytes forever, appending to the output list
+          // on every pass until the process died.
+          const start = this.state.DX & WORD;
+          for (let step = 0; step < 0x10000; step++) {
+            const address = (start + step) & WORD;
+            // `read8(segment, offset)` would recompute the address, so the
+            // flat byte array is read directly, which is what the legacy's
+            // `state.memory[address]` does.
+            const value = this.memory.bytes[address] ?? 0;
             if (value === 0x24) return;
             this.output.push({ type: "char", value });
-            address = wrap16(address + 1);
           }
+          // No terminator in 64 KB. The text has been reported; there is
+          // nothing else for this function to do with it.
+          return;
         }
         case 0x01:
         case 0x07:
@@ -866,14 +882,17 @@ export class Cpu {
         return;
       }
 
+      // OUT and OUTC are the lab's output channel and nothing else: they
+      // record a value and touch no memory. The port window is the input
+      // channel, plus OUTP, which is the one form that writes it. Writing the
+      // port here as well would be defensible hardware behaviour but would
+      // change what existing programs leave in memory at 300h.
       case "OUT": {
-        const port = this.portNumber(ops[0]);
-        const bits = ops[1]?.kind === "reg8" ? 8 : 16;
-        const value = this.readOperand(ops[1]);
-        this.portOut(port, bits, value);
-        // The port write is what the hardware sees; the output list is what the
-        // lab shows, and the legacy emulator records both.
-        this.output.push({ type: "number", value: bits === 8 ? value & BYTE : value & WORD });
+        // The register is the value, and it is the last operand in both
+        // spellings: the BrainBox form is `OUT reg`, the hardware form is
+        // `OUT port, reg`.
+        const value = this.readOperand(ops[ops.length - 1]);
+        this.output.push({ type: "number", value });
         return;
       }
 
@@ -1111,7 +1130,11 @@ export class Cpu {
           : immediate?.kind === "imm"
             ? immediate.value
             : 1;
-    const iterations = effectiveShiftCount(count, bits);
+    const iterations = effectiveShiftCount(count);
+    // A count of zero changes the value and every flag. Leaving the flags alone
+    // is the 8086 rule; the 286 onwards clear OF and CF instead, and matching
+    // the legacy means matching the 8086.
+    if (iterations === 0) return;
     let current = value;
     let carry = getFlag(this.state.FLAGS, "CF");
     let overflow = false;
@@ -1123,8 +1146,9 @@ export class Cpu {
     }
     this.state.FLAGS = logicFlags(current, bits, this.state.FLAGS);
     this.state.FLAGS = setFlag(this.state.FLAGS, "CF", carry);
-    // OF is only architecturally defined for a single-bit shift.
-    this.state.FLAGS = setFlag(this.state.FLAGS, "OF", iterations === 1 ? overflow : false);
+    // OF is only architecturally defined for a single-bit shift. A wider shift
+    // leaves it as it was rather than clearing it.
+    if (iterations === 1) this.state.FLAGS = setFlag(this.state.FLAGS, "OF", overflow);
     this.writeOperand(ops[slot], current);
   }
 
@@ -1136,10 +1160,13 @@ export class Cpu {
       const b = signed ? toSigned(operand, bits) : operand & maskFor(bits);
       const product = a * b;
       if (bits === 8) {
-        const low = product & 0xff;
-        this.setAccumulator(low);
-        this.writeReg16("DX", (product >> 8) & 0xff);
-        this.setMulFlags(low, (product >> 8) & 0xff, 8);
+        // The byte form keeps the whole 16-bit product in AX, so the high half
+        // lands in AH. DX is only the high half of the *word* form; putting it
+        // there for the byte form would be a plausible-looking mistake that
+        // quietly loses the top byte.
+        const result = product & 0xffff;
+        this.writeReg16("AX", result);
+        this.setMulFlags(result & 0xff, (result >> 8) & 0xff, 8);
       } else {
         const low = product & 0xffff;
         this.writeReg16("AX", low);
