@@ -19,7 +19,7 @@ import {
   type InsnDef,
   type OperandType,
 } from "../isa/table";
-import { SEGMENT_PREFIX, addressToRm, encodeModRM, type MemAddress } from "../isa/modrm";
+import { SEGMENT_PREFIX, addressToRm, defaultSegmentFor, encodeModRM, type MemAddress } from "../isa/modrm";
 import type { Operand } from "./operands";
 import { DiagnosticBag } from "./diagnostics";
 
@@ -416,7 +416,7 @@ export function emit(def: InsnDef, request: EncodeRequest, diagnostics: Diagnost
     // address would use anyway is redundant and gas omits it, so `mov ax,ds:[si]`
     // and `mov ax,[si]` must assemble identically.
     if (rmOperand?.kind === "mem" && rmOperand.address.segment) {
-      if (rmOperand.address.segment !== defaultSegment(rmOperand.address)) {
+      if (rmOperand.address.segment !== defaultSegmentFor(rmOperand.address)) {
         segmentPrefix = SEGMENT_PREFIX[rmOperand.address.segment];
       }
     }
@@ -485,15 +485,6 @@ export function emit(def: InsnDef, request: EncodeRequest, diagnostics: Diagnost
 
   if (segmentPrefix !== undefined) bytes.unshift(segmentPrefix);
   return bytes;
-}
-
-/**
- * The segment the 8086 would reach for on its own: DS everywhere except an
- * address based on BP, which defaults to SS because BP is the stack pointer's
- * companion register.
- */
-function defaultSegment(address: MemAddress): NonNullable<MemAddress["segment"]> {
-  return address.base === "BP" && address.index === undefined ? "SS" : "DS";
 }
 
 function toRegOrMem(

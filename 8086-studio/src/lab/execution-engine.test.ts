@@ -46,6 +46,16 @@ function printed(engine: EngineId, source: string, limit = 20): string {
 }
 
 const ENGINES: EngineId[] = ['legacy', 'v2'];
+
+/** One program both engines assemble, with a CALL and a second line to read. */
+const PROGRAM = [
+  'MOV AX, 0x1234',
+  'CMP AX, 0x1234',
+  'CALL far',
+  'HLT',
+  'far:',
+  '  MOV BX, 1',
+].join('\n');
 const PRINT_PROGRAM = ['MOV DX, msg', 'MOV AH, 09h', 'INT 21h', 'HLT', 'msg DB "Ok$"'].join('\n');
 
 describe('engineFromQuery', () => {
@@ -392,5 +402,145 @@ describe('where the engines genuinely differ', () => {
     // `OUTP` writes, so a number collected for it would be discarded.
     expect(session('legacy', 'IN AL, 30h\nHLT\n').inputPrompts().length).toBe(1);
     expect(session('v2', 'IN AL, 30h\nHLT\n').inputPrompts()).toEqual([]);
+  });
+});
+
+/**
+ * The instruction-inspection surface the debug view is built on.
+ *
+ * This exists because of the thing the view used to do: index into
+ * `debugProgram.instructions[ip]`. That only means anything on the legacy, where
+ * an address is an index into a parsed list. On the new engine an address is a
+ * byte offset in the code segment, so the same expression reads a different
+ * instruction or nothing at all, silently. Asking the engine for the instruction
+ * at an address is what lets the view stop caring.
+ *
+ * So the tests are about the two engines answering the same question, and about
+ * the v2 answers being right rather than merely present -- an interface that
+ * returns plausible nonsense on one engine is worse than one that refuses.
+ */
+describe('instructionAt', () => {
+    it('both engines name the instruction the first line assembles to', () => {
+    for (const engine of ENGINES) {
+      const first = session(engine, PROGRAM).instructionAddresses()[0];
+      const view = session(engine, PROGRAM).instructionAt(first);
+      expect(view, `${engine} has no instruction at ${first}`).not.toBeNull();
+      expect(view?.address, engine).toBe(first);
+      expect(view?.text, engine).toContain('MOV');
+      expect(view?.text, engine).toContain('AX');
+    }
+  });
+
+  it('both engines answer with null past the end of the program', () => {
+    for (const engine of ENGINES) {
+      const subject = session(engine, PROGRAM);
+      const addresses = subject.instructionAddresses();
+      const past = addresses[addresses.length - 1] + 0x1000;
+      expect(subject.instructionAt(past), engine).toBeNull();
+    }
+  });
+
+  it('the new engine refuses an address that is not the start of an instruction', () => {
+    // It can decode any byte offset -- zero bytes are a perfectly good
+    // `ADD [BX+SI], AL` -- so the risk is not failing to decode but answering
+    // confidently about a byte that is data, or the middle of the instruction
+    // before it. The source map knows where the boundaries are.
+    const subject = session('v2', 'MOV AX, 0x1234\nHLT\n');
+    const start = subject.instructionAddresses()[0];
+    // MOV AX,imm16 occupies three bytes, so start+1 is inside it.
+    expect(subject.instructionAt(start), 'the instruction itself').not.toBeNull();
+    expect(subject.instructionAt(start + 1), 'inside an instruction').toBeNull();
+    expect(subject.instructionAt(start + 2), 'inside an instruction').toBeNull();
+    expect(subject.instructionAt(start + 3), 'the next instruction').not.toBeNull();
+  });
+
+  it('the new engine reports a byte length, and the legacy admits it has none', () => {
+    // MOV AX,imm16 is three bytes. The legacy's parsed instruction records no
+    // length at all, so it says so rather than reporting a number it would have
+    // to invent; the whole point of the new engine having one is that it knows.
+    const v2 = session('v2', PROGRAM).instructionAt(session('v2', PROGRAM).instructionAddresses()[0]);
+    expect(v2?.byteLength).toBe(3);
+    const legacy = session('legacy', PROGRAM).instructionAt(0);
+    expect(legacy?.byteLength).toBeNull();
+  });
+
+  it('the new engine tells MOV and CMP apart, which the legacy cannot', () => {
+    // Same operand shape, opposite data flow: MOV writes AX without reading it,
+    // CMP reads both and writes no register but the flags. The legacy's parsed
+    // instruction has no direction to report, so it reports none.
+    const subject = session('v2', PROGRAM);
+    const addresses = subject.instructionAddresses();
+    const mov = subject.instructionAt(addresses[0]);
+    const cmp = subject.instructionAt(addresses[1]);
+    expect(mov?.text).toContain('MOV');
+    expect(mov?.writes).toContain('AX');
+    expect(mov?.reads).not.toContain('AX');
+    expect(cmp?.text).toContain('CMP');
+    expect(cmp?.writes).toEqual(expect.not.arrayContaining(['AX']));
+    expect(cmp?.writes).toContain('FLAGS');
+
+    const legacy = session('legacy', PROGRAM);
+    expect(legacy.instructionAt(0)?.writes).toEqual([]);
+    expect(legacy.instructionAt(0)?.reads).toEqual([]);
+  });
+
+  it('both engines agree on which instruction is a CALL', () => {
+    // Step Over asks this rather than string-matching a mnemonic, because "is
+    // this a call" is a property of the encoding.
+    for (const engine of ENGINES) {
+      const subject = session(engine, PROGRAM);
+      const call = subject.instructionAddresses()
+        .map((address) => subject.instructionAt(address))
+        .find((view) => view?.text.includes('CALL'));
+      expect(call, `${engine} has no CALL`).toBeDefined();
+      expect(call?.isCall, engine).toBe(true);
+      const mov = subject.instructionAddresses()
+        .map((address) => subject.instructionAt(address))
+        .find((view) => view?.text.includes('MOV'));
+      expect(mov?.isCall, engine).toBe(false);
+    }
+  });
+
+  it('the new engine maps an address to the source line it came from', () => {
+    // Only the new engine can do this for source typed into the editor: the
+    // legacy's `sourceLineAt` reads `_SRC_` labels out of its own assembled text,
+    // so a bare program has nothing for it to find. That is a real difference
+    // and it is the reason the view asks rather than looking.
+    const subject = session('v2', PROGRAM);
+    const first = subject.instructionAddresses()[0];
+    expect(subject.instructionAt(first)?.sourceLine).toBe(1);
+    expect(subject.sourceLineAt(first)).toBe(1);
+  });
+
+  it('an instruction view never disagrees with the session about the source line', () => {
+    // Whatever each engine can say about the source, the two ways of asking have
+    // to say the same thing -- including saying nothing at all. A view that read
+    // one and not the other would highlight a line the engine does not believe.
+    for (const engine of ENGINES) {
+      const subject = session(engine, PROGRAM);
+      for (const address of subject.instructionAddresses()) {
+        expect(subject.instructionAt(address)?.sourceLine, `${engine} at ${address}`)
+          .toBe(subject.sourceLineAt(address));
+      }
+    }
+  });
+});
+
+describe('instructionAddresses', () => {
+  it('lists one address per instruction, in order, on both engines', () => {
+    for (const engine of ENGINES) {
+      const addresses = session(engine, PROGRAM).instructionAddresses();
+      expect(addresses.length, engine).toBeGreaterThan(3);
+      expect([...addresses].sort((a, b) => a - b), engine).toEqual(addresses);
+    }
+  });
+
+  it('gives every listed address an instruction', () => {
+    for (const engine of ENGINES) {
+      const subject = session(engine, PROGRAM);
+      for (const address of subject.instructionAddresses()) {
+        expect(subject.instructionAt(address), `${engine} at ${address}`).not.toBeNull();
+      }
+    }
   });
 });

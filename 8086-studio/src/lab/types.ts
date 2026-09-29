@@ -34,6 +34,47 @@ export interface TraceEntry {
   timestampMs: number;
 }
 
+/**
+ * One instruction, in the shape the debugger needs to show it.
+ *
+ * The two engines hold instructions in incompatible ways: the legacy has a
+ * parsed list and treats IP as an index into it, the new engine has bytes in
+ * memory and decodes them on demand. The view layer must not have to know which
+ * it is looking at, so both reduce to this.
+ *
+ * The `byteLength`, `flags`, `reads` and `writes` fields are the reason this type
+ * exists. The legacy's parsed instruction records none of them, and it is
+ * reported as unstated rather than guessed from the mnemonic -- a value derived
+ * from the name of an instruction is a value that can be wrong, and the whole
+ * reason the new engine has these is that it knows them. The new engine fills
+ * them in from the decode, where they come from the table rather than from
+ * parsing a string.
+ */
+export interface InstructionView {
+  /** Address this instruction starts at. */
+  readonly address: number;
+  /** Source line this came from, or null when the engine cannot say. */
+  readonly sourceLine: number | null;
+  /** Intel-syntax text, e.g. `MOV AX, [BX+SI]`. */
+  readonly text: string;
+  /** Bytes the instruction occupies, or null when the engine does not record it. */
+  readonly byteLength: number | null;
+  /** Flags this instruction reads or writes, e.g. `["ZF", "CF"]`. */
+  readonly flags: readonly string[];
+  /** Registers this instruction reads, e.g. `["BX", "SI"]`. */
+  readonly reads: readonly string[];
+  /** Registers this instruction writes, e.g. `["AX"]`. */
+  readonly writes: readonly string[];
+  /**
+   * True for `CALL`.
+   *
+   * Step Over needs this to decide whether to run to the matching `RET`, and it
+   * asks the engine rather than string-matching a mnemonic, because "is this a
+   * call" is a property of the encoding.
+   */
+  readonly isCall: boolean;
+}
+
 export interface StepDiagnostics {
   nextState: CPUState;
   output: ProgramOutput[];

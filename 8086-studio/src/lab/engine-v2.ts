@@ -35,9 +35,10 @@ import { Cpu, createInitialState as createEngineState } from '@/engine/cpu/cpu';
 import { Memory, SEGMENT_SIZE, physicalAddress } from '@/engine/memory';
 import { assemble } from '@/engine/assembler/assemble';
 import { decode, type DecodedInstruction } from '@/engine/cpu/decode';
+import { parentRegisterOf, registerEffects } from '@/engine/cpu/effects';
 import { getFlags, type ProgramOutput } from '@/emulator/cpu';
 import type { CPUState, Registers } from '@/types/cpu';
-import type { StepDiagnostics, TraceEntry } from '@/lab/types';
+import type { InstructionView, StepDiagnostics, TraceEntry } from '@/lab/types';
 
 /** Where a .COM program starts, and the default the lab has always used. */
 const COM_ORIGIN = 0x100;
@@ -156,17 +157,26 @@ export function buildV2SourceMap(
  * the map is keyed by: two segments can both start at offset 0, and an address
  * only means something once you say which segment it is an offset *in*.
  */
+export function findV2SourceEntry(
+  sourceMap: readonly V2SourceMapEntry[],
+  segment: string,
+  address: number,
+): V2SourceMapEntry | null {
+  for (const entry of sourceMap) {
+    if (entry.segment === segment && address >= entry.instructionStart && address <= entry.instructionEnd) {
+      return entry;
+    }
+  }
+  return null;
+}
+
+/** The source line covering an address, or null when no entry does. */
 export function findV2SourceLine(
   sourceMap: readonly V2SourceMapEntry[],
   segment: string,
   address: number,
 ): number | null {
-  for (const entry of sourceMap) {
-    if (entry.segment === segment && address >= entry.instructionStart && address <= entry.instructionEnd) {
-      return entry.sourceLine;
-    }
-  }
-  return null;
+  return findV2SourceEntry(sourceMap, segment, address)?.sourceLine ?? null;
 }
 
 /**
@@ -286,6 +296,63 @@ export class V2Session {
    */
   sourceLineAt(ip: number): number | null {
     return findV2SourceLine(this.sourceMap, this.codeSegment, ip & 0xffff);
+  }
+
+  /**
+   * The instruction at an address, in the shape the debug view asks for.
+   *
+   * An address here is a byte offset in the code segment, not an index, which is
+   * the whole reason this method exists: the view cannot index into anything,
+   * because the instructions are decoded out of memory on demand and there is no
+   * list to index.
+   *
+   * Everything is read off the encoding rather than off the source text. The
+   * flags come from the table entry the decoder matched and the register
+   * directions from the same table, so `MOV AX, BX` and `CMP AX, BX` differ here
+   * even though their operand lists are identical -- which is the difference the
+   * legacy cannot report at all.
+   */
+  instructionAt(address: number): InstructionView | null {
+    // Only at an address the assembler says an instruction begins. This engine
+    // can decode any byte offset -- zero bytes decode perfectly well as
+    // `ADD [BX+SI], AL` -- and answering at a data byte or the middle of an
+    // instruction would be a confident wrong answer. The source map is the only
+    // record of where the boundaries are, so it decides.
+    const entry = findV2SourceEntry(this.sourceMap, this.codeSegment, address & 0xffff);
+    if (entry === null || entry.instructionStart !== (address & 0xffff)) return null;
+    const decoded = this.decodeAt(address);
+    if (!decoded.ok) return null;
+    const effects = registerEffects(decoded);
+    return {
+      address: address & 0xffff,
+      sourceLine: entry?.sourceLine ?? null,
+      text: toLabSyntax(decoded.text),
+      byteLength: decoded.length,
+      // Reported through the 16-bit register, because that is what the lab
+      // stores: a write to AL is a write to half of AX and the panel has one row
+      // per register.
+      flags: decoded.def?.flags ?? [],
+      reads: [...new Set(effects.reads.map(parentRegisterOf))].sort(),
+      writes: [...new Set(effects.writes.map(parentRegisterOf))].sort(),
+      isCall: decoded.mnem === "CALL",
+    };
+  }
+
+  /**
+   * Every address an instruction starts at, taken from the source map.
+   *
+   * Not every byte offset in the segment is an instruction boundary, so this is
+   * the list of places a breakpoint can legally go. Where a source line covers
+   * more than one instruction, each is listed separately, because stopping on
+   * the second without stopping on the first is not a thing the view can mean.
+   */
+  instructionAddresses(): readonly number[] {
+    const bases = new Set<number>();
+    for (const entry of this.sourceMap) {
+      if (entry.segment !== this.codeSegment) continue;
+      bases.add(entry.instructionStart);
+    }
+    return [...bases].sort((a, b) => a - b);
   }
 
   /** The state, in the shape the lab stores and every component already reads. */

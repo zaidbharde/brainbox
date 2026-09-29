@@ -20,6 +20,7 @@ import {
 } from "../isa/table";
 import {
   decodeModRM,
+  defaultSegmentFor,
   formatAddress,
   rmRegisterName,
   type MemAddress,
@@ -468,12 +469,14 @@ function rmOperand(
 }
 
 /**
- * The 8086 default segment for a memory operand: SS when the base is BP and
- * there is no index, DS otherwise. [BP+SI] is DS -- the index makes it not a
- * "base only" address.
+ * The default segment, from the one place that decides it.
+ *
+ * The resolved segment goes on the operand because the CPU needs to know which
+ * segment an address is relative to. The *text* deliberately does not show it
+ * when it was only implied, which is what `formatAddress(..., true)` is for.
  */
 function defaultSegment(address: MemAddress): "SS" | "DS" {
-  return address.base === "BP" && address.index === undefined ? "SS" : "DS";
+  return defaultSegmentFor(address);
 }
 
 function fixedOperand(type: OperandType): DecodedOperand | undefined {
@@ -526,13 +529,13 @@ function formatOperand(operand: DecodedOperand): string {
       // instruction's size.
       return `${operand.size === 8 ? "SHORT" : "NEAR"} ${operand.target}`;
     case "moffs":
-      return formatAddress(operand.address);
+      return formatAddress(operand.address, true);
     case "farptr":
       return `${operand.offset}h:${operand.segment.toString(16).padStart(4, "0")}h`;
     case "mem":
       // Without the size, `ADD [BX], 16h` re-assembles as the byte form 80 07
       // and means something else entirely.
-      return `${operand.width === 8 ? "BYTE PTR" : "WORD PTR"} ${formatAddress(operand.address)}`;
+      return `${operand.width === 8 ? "BYTE PTR" : "WORD PTR"} ${formatAddress(operand.address, true)}`;
     default:
       return operand.name;
   }

@@ -19,7 +19,7 @@ import { buildSourceMapEntries, findSourceLineForInstruction } from '@/lab/sourc
 import { V2Session } from '@/lab/engine-v2';
 import type { AssembledProgram, CPUState } from '@/types/cpu';
 import type { ProgramOutput } from '@/emulator/cpu';
-import type { SourceMapEntry, StepDiagnostics } from '@/lab/types';
+import type { InstructionView, SourceMapEntry, StepDiagnostics } from '@/lab/types';
 
 /** Which engine the lab is running. The URL parameter's only accepted value. */
 export type EngineId = 'legacy' | 'v2';
@@ -41,6 +41,24 @@ export interface DebugSession {
   step(stepNumber: number, stepStartedAtMs: number): StepDiagnostics;
   /** The source line the program is stopped on, or null if it cannot be said. */
   sourceLineAt(ip: number): number | null;
+  /**
+   * The instruction at an address, or null when the engine cannot say.
+   *
+   * This is the reason the debug view does not index into an instruction list
+   * itself. The legacy's address is an index into a parsed list and the new
+   * engine's is a byte offset in memory, so a view that indexes cannot work for
+   * both; asking the engine for the instruction at an address is the only shape
+   * that is honest about which one it has.
+   */
+  instructionAt(address: number): InstructionView | null;
+  /**
+   * Every address an instruction begins at, ascending.
+   *
+   * For the view's bounds questions: which addresses are steppable, and where a
+   * breakpoint is legal. The legacy returns instruction indices, the new engine
+   * returns byte offsets, and neither is meaningful to the other.
+   */
+  instructionAddresses(): readonly number[];
   /** True once the program has finished, however it finished. */
   isFinished(): boolean;
   /**
@@ -174,6 +192,35 @@ class LegacySession implements DebugSession {
 
   sourceLineAt(ip: number): number | null {
     return findSourceLineForInstruction(this.sourceMap, ip);
+  }
+
+  /**
+   * The instruction at an index, which is what an address is in this engine.
+   *
+   * Everything beyond the text is reported as unstated. The legacy parses
+   * instructions into `{opcode, operands, address, raw}` and keeps no record of
+   * how many bytes each one took, which flags it touched, or which registers it
+   * read, so there is nothing here to answer those with. Filling them in would
+   * mean a second, worse assembler kept in step with the real one by hand.
+   */
+  instructionAt(address: number): InstructionView | null {
+    const instruction = this.program.instructions[address];
+    if (instruction === undefined) return null;
+    const opcode = instruction.opcode.toUpperCase();
+    return {
+      address,
+      sourceLine: this.sourceLineAt(address),
+      text: `${opcode} ${instruction.operands.join(', ')}`.trim(),
+      byteLength: null,
+      flags: [],
+      reads: [],
+      writes: [],
+      isCall: opcode === 'CALL',
+    };
+  }
+
+  instructionAddresses(): readonly number[] {
+    return this.program.instructions.map((instruction) => instruction.address);
   }
 
   isFinished(): boolean {

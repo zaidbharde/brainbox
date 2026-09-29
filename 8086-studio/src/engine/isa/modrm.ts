@@ -267,9 +267,39 @@ export function effectiveOffset(
 }
 
 /** Human-readable form, e.g. `[BX+SI-4]` or `ES:[DI+0x10]`. */
-export function formatAddress(address: MemAddress): string {
+/**
+ * The segment the 8086 reaches for on its own for an address.
+ *
+ * SS when the base is BP, DS otherwise. The index register plays no part: `[BP]`,
+ * `[BP+SI]` and `[BP+DI]` are all stack-relative, and only a base of BX or SI
+ * gives DS. SP cannot be a base here at all -- the 16-bit ModR/M forms have no
+ * encoding for it -- so BP is the only stack pointer to ask about.
+ *
+ * This lives in one place because it was in two and they disagreed. The decoder
+ * had the index condition and the encoder did not, so an address could resolve
+ * to DS on one side and SS on the other, and the encoder would then prefix an
+ * instruction with a segment byte it did not need. The difference is invisible
+ * in a run, because the lab loads every segment equal.
+ */
+export function defaultSegmentFor(address: MemAddress): "SS" | "DS" {
+  return address.base === "BP" ? "SS" : "DS";
+}
+
+/**
+ * A memory operand as source text.
+ *
+ * `onlyOverride` prints the segment only when it is not the one the address
+ * would use by itself. The decoder needs that distinction: it resolves the
+ * default segment for the CPU's benefit, but printing that resolved default
+ * would make `MOV AX, [BP+SI]` decode to text that re-assembles with a
+ * redundant `SS:` prefix byte in front of it. A disassembler prints the
+ * segment that is there, not the one that is implied.
+ */
+export function formatAddress(address: MemAddress, onlyOverride = false): string {
   const parts: string[] = [];
-  if (address.segment) parts.push(`${address.segment}:`);
+  if (address.segment && (!onlyOverride || address.segment !== defaultSegmentFor(address))) {
+    parts.push(`${address.segment}:`);
+  }
   let body = "";
   if (address.base) body += address.base;
   if (address.index) body += body ? `+${address.index}` : address.index;

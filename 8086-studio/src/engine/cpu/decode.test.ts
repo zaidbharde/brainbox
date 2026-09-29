@@ -130,11 +130,34 @@ describe("decode: segment overrides", () => {
     expect(bx.operands[1]).toEqual({ kind: "mem", address: { base: "BX", segment: "DS" }, width: 16 });
   });
 
-  it("uses DS for [BP+SI], because an index makes it not a base-only address", () => {
+  it("uses SS for [BP+SI] and [BP+DI], because the base is BP", () => {
     // rm=010 with mod=00 is [BP+SI]; rm=000 would be [BX+SI], which is DS for a
-    // different reason.
-    const decoded = decode(new Uint8Array([0x8b, 0x02]));
-    expect(decoded.operands[1]).toEqual({ kind: "mem", address: { base: "BP", index: "SI", segment: "DS" }, width: 16 });
+    // different reason. The index register does not change the segment: on a
+    // 8086 it is the *base* that decides, and BP is the stack pointer's
+    // companion. An earlier version of this test asserted DS here, on the
+    // reasoning that an index makes it "not a base-only address", and the
+    // encoder had a second copy of that rule which disagreed with this one --
+    // so `[BP+SI]` resolved to DS on the decoding side and SS on the encoding
+    // side, and the encoder emitted a segment prefix byte for an address that
+    // did not need one.
+    const si = decode(new Uint8Array([0x8b, 0x02]));
+    expect(si.operands[1]).toEqual({ kind: "mem", address: { base: "BP", index: "SI", segment: "SS" }, width: 16 });
+    const di = decode(new Uint8Array([0x8b, 0x03]));
+    expect(di.operands[1]).toEqual({ kind: "mem", address: { base: "BP", index: "DI", segment: "SS" }, width: 16 });
+  });
+
+  it("does not print a segment the address would have used anyway", () => {
+    // The operand carries the resolved segment because the CPU needs it, but a
+    // disassembler prints the prefix that is present, not the segment that is
+    // implied. Printing it would make the text re-assemble with a redundant
+    // prefix byte: `MOV AX, [BP+SI]` would come back as 3E-free bytes plus 54.
+    expect(decode(new Uint8Array([0x8b, 0x02])).text).toBe("MOV AX, WORD PTR [BP+SI]");
+    // An override to a segment the address would not have chosen is printed,
+    // because dropping it would change what the instruction addresses.
+    expect(decode(new Uint8Array([0x26, 0x8b, 0x02])).text).toBe("MOV AX, WORD PTR ES:[BP+SI]");
+    // A prefix naming the default is redundant, and is left out the way a
+    // disassembler leaves out a redundant one.
+    expect(decode(new Uint8Array([0x36, 0x8b, 0x02])).text).toBe("MOV AX, WORD PTR [BP+SI]");
   });
 });
 
