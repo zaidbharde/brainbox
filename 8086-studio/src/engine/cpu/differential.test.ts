@@ -155,6 +155,12 @@ function runProgramOnce(source: string): Projection {
 }
 
 function runNew(source: string): Projection {
+  const cpu = newCpu(source);
+  return projectNew(cpu, describeOutput(cpu.output));
+}
+
+/** The new engine, run to completion, for the fields `projectNew` leaves out. */
+function newCpu(source: string): Cpu {
   const assembled = assemble(source, { origin: ORIGIN });
   expect(assembled.errors.map((d) => d.message)).toEqual([]);
   const memory = new Memory();
@@ -178,7 +184,7 @@ function runNew(source: string): Projection {
   };
   const cpu = new Cpu(memory, state);
   cpu.run(5000);
-  return projectNew(cpu, describeOutput(cpu.output));
+  return cpu;
 }
 
 /**
@@ -305,6 +311,44 @@ describe("differential: the new CPU matches the legacy emulator", () => {
       "MOV AX, 1234h\nPUSH AX\nADD SP, 2\nHLT",
       "MOV BP, 0F00h\nMOV SP, BP\nMOV WORD PTR [BP+0], 5678h\nHLT",
     ]);
+  });
+
+  it("matches on the direct memory offsets, opcodes A0-A3", () => {
+    // The four forms that put the address in the instruction instead of a ModR/M
+    // byte. The new engine picked the wrong operand slot for the two store forms
+    // and dropped them, which the legacy did not: a program that works in the lab
+    // would have quietly stopped saving its data under v2.
+    expectAllSame([
+      "MOV AX, 1234h\nMOV [0200h], AX\nHLT",
+      "MOV BX, 0200h\nMOV WORD PTR [BX], 0BEEFh\nMOV AX, [0200h]\nHLT",
+      "MOV AX, 1234h\nMOV [0200h], AL\nHLT",
+      "MOV BX, 0200h\nMOV WORD PTR [BX], 1234h\nMOV AL, [0200h]\nHLT",
+      "MOV AX, 0ABCDh\nMOV [0300h], AX\nMOV BX, 0300h\nMOV CX, [BX]\nHLT",
+    ]);
+  });
+
+  it("matches on loading a segment register", () => {
+    // Segmentation is the one thing the legacy's flat memory cannot check: it
+    // holds DS/ES/SS but never uses them to form an address, and it starts DS
+    // and ES at 100h where this harness starts the new engine's at 0. So the
+    // segment value is compared on its own rather than through the shared
+    // projection. The addressing consequence -- a store that lands in the
+    // segment that was asked for -- is in cpu.test.ts, with a real segment.
+    // `POP ES`/`POP SS` are 8086 instructions that neither assembler here
+    // accepts, so the two `MOV` forms are what can be compared. The segment
+    // registers are still reachable as a destination in the CPU: the `MOV`
+    // forms in cpu.test.ts write ES, DS and a segment into memory.
+    const cases: ReadonlyArray<[string, "DS" | "ES" | "SS"]> = [
+      ["MOV AX, 1000h\nMOV ES, AX\nHLT", "ES"],
+      ["MOV AX, 2000h\nMOV DS, AX\nHLT", "DS"],
+    ];
+    for (const [source, segment] of cases) {
+      const legacyProgram = legacyAssemble(source);
+      expect(legacyProgram.errors.filter((e) => e.type === "error").map((e) => e.message)).toEqual([]);
+      const legacy = legacyRunProgram(legacyProgram, 5000).finalState.registers[segment];
+      const mine = newCpu(source).readReg16(segment);
+      expect(mine, source).toBe(legacy & 0xffff);
+    }
   });
 
   it("matches on control flow", () => {

@@ -16,6 +16,9 @@
 /** Size of the 8086 address space: 2^20 = 1 MB. */
 export const MEMORY_SIZE = 0x100000;
 
+/** Size of one segment, and of the window a segment can address: 2^16 = 64 KB. */
+export const SEGMENT_SIZE = 0x10000;
+
 /** Highest physical address in the 8086's 20-bit address bus. */
 export const MAX_PHYSICAL = MEMORY_SIZE - 1;
 

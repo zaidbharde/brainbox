@@ -101,11 +101,50 @@ describe("MOV and addressing", () => {
   });
 
   it("honours a segment override", () => {
+    // DS and ES both start at zero, so a CPU that ignored either the load of
+    // ES or the override itself would still land on the right bytes here. The
+    // two segments are put somewhere different first, so the override has to be
+    // honoured on both sides to pass.
     const h = com(
-      "MOV AX, 1000h\nMOV ES, AX\nMOV WORD PTR [0x30], 1111h\nMOV AX, 0\n" +
-        "MOV AX, ES:[0x30]\nHLT",
+      "MOV AX, 1000h\nMOV ES, AX\nMOV BX, 2000h\nMOV DS, BX\n" +
+        "MOV WORD PTR [0x30], 1111h\nMOV AX, 0\nMOV AX, [0x30]\n" +
+        "MOV BX, 0\nMOV BX, ES:[0x30]\nHLT",
     ).run();
+    // DS is 2000h: the word went to DS:0x30 and came back from there.
     expect(AX(h)).toBe(0x1111);
+    // ES is 1000h and has never been written to, so the same offset is empty.
+    expect(h.reg("BX")).toBe(0);
+  });
+
+  it("loads a segment register from a register", () => {
+    // 8E: MOV sreg, r/m16. This shares a ModR/M shape with `MOV r/m, imm`, and
+    // executing it as that writes the register to itself: the instruction looks
+    // like it ran and the segment never moves.
+    const h = com("MOV AX, 1000h\nMOV ES, AX\nHLT").run();
+    expect(h.reg("ES")).toBe(0x1000);
+  });
+
+  it("stores a segment register into memory", () => {
+    // 8C: MOV r/m16, sreg. The other half of the same pair.
+    const h = com("MOV AX, 2000h\nMOV DS, AX\nMOV BX, 0200h\nMOV [BX], DS\nHLT").run();
+    expect(h.memory.read8(0x2000, 0x200)).toBe(0x00);
+    expect(h.memory.read8(0x2000, 0x201)).toBe(0x20);
+  });
+
+  it("takes the segment from memory", () => {
+    const h = com(
+      "MOV BX, 0200h\nMOV WORD PTR [BX], 3000h\nMOV ES, [BX]\n" +
+        "MOV WORD PTR ES:[BX], 0AAAAh\nMOV DX, [BX]\nHLT",
+    ).run();
+    expect(h.reg("ES")).toBe(0x3000);
+    // The word written through ES is in ES, and DS still has what it had.
+    expect(h.memory.read8(0x3000, 0x200)).toBe(0xaa);
+    expect(h.reg("DX")).toBe(0x3000);
+  });
+
+  it("pops a value into a general register", () => {
+    const h = com("MOV AX, 4000h\nPUSH AX\nPOP CX\nHLT").run();
+    expect(h.reg("CX")).toBe(0x4000);
   });
 
   it("loads an effective address without touching memory", () => {
@@ -117,6 +156,115 @@ describe("MOV and addressing", () => {
     const h = com("MOV AX, 1234h\nMOV AH, 0\nHLT").run();
     expect(AH(h)).toBe(0);
     expect(AL(h)).toBe(0x34);
+  });
+});
+
+describe("direct memory offsets, opcodes A0-A3", () => {
+  // These four encodings carry the address in the instruction stream instead of
+  // a ModR/M byte, so the operand arrives as `moffs` rather than `mem`. The
+  // failure they invite is a silent one: `MOV [0200h], AX` decodes to something
+  // the CPU recognises, writes to nothing, and leaves AX holding its own value,
+  // so the program looks like it ran and simply lost the store.
+  it("stores AX through a direct offset", () => {
+    const h = com("MOV AX, 1234h\nMOV [0200h], AX\nHLT").run();
+    expect(h.memory.read8(0, 0x200)).toBe(0x34);
+    expect(h.memory.read8(0, 0x201)).toBe(0x12);
+  });
+
+  it("loads AX through a direct offset", () => {
+    const h = com("MOV BX, 0200h\nMOV WORD PTR [BX], 0BEEFh\nMOV AX, [0200h]\nHLT").run();
+    expect(AX(h)).toBe(0xbeef);
+  });
+
+  it("stores AL through a direct offset, and only the low byte", () => {
+    const h = com("MOV AX, 1234h\nMOV [0200h], AL\nHLT").run();
+    expect(h.memory.read8(0, 0x200)).toBe(0x34);
+    // The byte above it is untouched, which is what makes this A2 and not A3.
+    expect(h.memory.read8(0, 0x201)).toBe(0);
+  });
+
+  it("loads AL through a direct offset, and only the low byte", () => {
+    const h = com("MOV BX, 0200h\nMOV WORD PTR [BX], 1234h\nMOV AL, [0200h]\nHLT").run();
+    expect(AL(h)).toBe(0x34);
+    expect(AX(h)).toBe(0x0034);
+  });
+
+  it("round-trips through the same address", () => {
+    const h = com("MOV AX, 0ABCDh\nMOV [0300h], AX\nMOV BX, 0\nMOV AX, [0300h]\nHLT").run();
+    expect(AX(h)).toBe(0xabcd);
+  });
+
+  it("records the address it wrote, so a debugger can show it", () => {
+    const h = com("MOV AX, 1234h\nMOV [0200h], AX\nHLT");
+    h.cpu.step();
+    h.cpu.step();
+    expect(h.cpu.lastWrites).toEqual([0x200, 0x201]);
+  });
+
+  it("honours a segment override on a direct offset", () => {
+    // The direct offset is a bare 16-bit address, and on the 8086 it is still
+    // relative to a segment register -- DS unless a prefix says otherwise. An
+    // override that the operand path ignores stores to the wrong segment and
+    // still looks like it worked.
+    const h = com(
+      "MOV AX, 1000h\nMOV ES, AX\nMOV AX, 5678h\n" +
+        "MOV ES:[0200h], AX\nMOV BX, 0200h\nMOV DX, ES:[BX]\nHLT",
+    ).run();
+    expect(h.memory.read8(0x1000, 0x200)).toBe(0x78);
+    expect(h.memory.read8(0x1000, 0x201)).toBe(0x56);
+    // And nothing landed in the default segment.
+    expect(h.memory.read8(0, 0x200)).toBe(0);
+    expect(h.reg("DX")).toBe(0x5678);
+  });
+
+  it("uses DS when there is no override", () => {
+    const h = com("MOV AX, 1000h\nMOV DS, AX\nMOV BX, 1234h\nMOV [0200h], BX\nHLT");
+    h.cpu.step(); h.cpu.step(); h.cpu.step(); h.cpu.step();
+    expect(h.cpu.lastWrites).toEqual([0x10000 + 0x200, 0x10000 + 0x201]);
+  });
+
+  it("stores to a .DATA variable named by a label", () => {
+    // The same form, but with the address coming from a symbol in another
+    // segment. `MOV [VALUE], AX` is what a MASM program means by a direct
+    // offset, and it is the shape the lab's own samples use.
+    const source = [
+      ".MODEL small",
+      "CODE SEGMENT",
+      "  MOV AX, 0BEEFh",
+      "  MOV [VALUE], AX",
+      "  MOV BX, VALUE",
+      "  MOV CX, [BX]",
+      "  HLT",
+      "CODE ENDS",
+      "DATA SEGMENT",
+      "  VALUE DW 0",
+      "DATA ENDS",
+      "END",
+    ].join("\n");
+    const assembled = assemble(source, { origin: 0 });
+    expect(assembled.errors.map((d) => d.message)).toEqual([]);
+    const memory = new Memory();
+    for (const segment of assembled.segments) {
+      memory.bytes.set(segment.bytes, segment.base + segment.origin);
+    }
+    const cpu = new Cpu(memory, {
+      ...createInitialState(),
+      IP: assembled.entry.ip,
+      CS: assembled.entry.codeBase,
+      DS: assembled.entry.dataBase,
+      SS: assembled.entry.stackBase,
+      SP: assembled.entry.sp,
+    });
+    cpu.run(100);
+    expect(cpu.state.error).toBeFalsy();
+    // The variable's address is its offset in DATA, and DATA is at the segment
+    // DS now points at, so the value is read back through that segment.
+    const data = assembled.segments.find((s) => s.name === "DATA")!;
+    const segment = assembled.entry.dataBase;
+    const offset = assembled.symbols.lookup("VALUE")!.value - data.origin;
+    expect(memory.read8(segment, offset)).toBe(0xef);
+    expect(memory.read8(segment, offset + 1)).toBe(0xbe);
+    expect(cpu.readReg16("CX")).toBe(0xbeef);
   });
 });
 

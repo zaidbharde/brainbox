@@ -104,9 +104,24 @@ export class Cpu {
   readonly output: ProgramOutput[] = [];
   /** Every IP value this CPU has executed at, for the debugger and tests. */
   readonly trace: number[] = [];
+  /**
+   * Physical byte addresses the last step read, and the ones it wrote.
+   *
+   * These are recorded by the CPU itself rather than worked out afterwards by
+   * whoever is watching, because only the CPU knows which address an operand
+   * really referred to: `MOV [BX+SI], AL` depends on BX and SI at the moment it
+   * ran, and a debugger asked to describe that instruction from the outside can
+   * only re-read those registers and hope they have not moved on. Instruction
+   * fetches are not included, since fetching is not a data access, and neither
+   * are port reads and writes, which are not memory.
+   */
+  lastReads: number[] = [];
+  lastWrites: number[] = [];
   private input: number[];
   private inputIndex = 0;
   private steps = 0;
+  /** Set while fetching, so instruction bytes are not recorded as data reads. */
+  private fetching = false;
 
   constructor(memory: Memory, state: CpuState = createInitialState(), options: CpuOptions = {}) {
     this.memory = memory;
@@ -153,10 +168,12 @@ export class Cpu {
   }
 
   read8(segment: number, offset: number): number {
+    if (!this.fetching) this.lastReads.push(physicalAddress(segment, offset));
     return this.memory.read8(segment, offset);
   }
 
   write8(segment: number, offset: number, value: number): void {
+    if (!this.fetching) this.lastWrites.push(physicalAddress(segment, offset));
     this.memory.write8(segment, offset, value);
   }
 
@@ -179,8 +196,13 @@ export class Cpu {
    */
   private fetch(count: number): Uint8Array {
     const bytes = new Uint8Array(count);
-    for (let i = 0; i < count; i++) {
-      bytes[i] = this.read8(this.segment("CS"), (this.state.IP + i) & WORD);
+    this.fetching = true;
+    try {
+      for (let i = 0; i < count; i++) {
+        bytes[i] = this.read8(this.segment("CS"), (this.state.IP + i) & WORD);
+      }
+    } finally {
+      this.fetching = false;
     }
     return bytes;
   }
@@ -188,6 +210,8 @@ export class Cpu {
   step(): void {
     if (this.state.halted) return;
     this.steps++;
+    this.lastReads = [];
+    this.lastWrites = [];
     if (this.steps > 5_000_000) {
       this.state.halted = true;
       this.state.error = "step limit exceeded";
@@ -254,6 +278,21 @@ export class Cpu {
     };
   }
 
+  /**
+   * The failure for an operand kind the CPU has no case for.
+   *
+   * This used to be a silent `return 0` / `return`, and that is the worst
+   * possible behaviour for an emulator: the instruction decoded, the program
+   * kept going, and the one thing the instruction was supposed to do never
+   * happened. `MOV [0200h], AX` dropped its store and `MOV ES, AX` dropped its
+   * segment, and neither left anything behind to say so. Throwing puts the
+   * complaint where the instruction is; `step` catches it and stops with the
+   * message and the IP that caused it.
+   */
+  private unhandledOperand(action: "read" | "write", operand: DecodedOperand): never {
+    throw new Error(`cannot ${action} a "${operand.kind}" operand`);
+  }
+
   private readOperand(operand: DecodedOperand | undefined): number {
     if (operand === undefined) return 0;
     switch (operand.kind) {
@@ -271,12 +310,18 @@ export class Cpu {
         return operand.segment;
       case "mem":
       case "moffs": {
+        // One path for both: a direct offset is a memory operand that happens
+        // to have no index register, so it takes the same segment lookup and
+        // the same default-segment rule as `MOV WORD PTR [0200h], AX`.
         const { disp } = this.addressOf(operand);
         const segment = this.segment((operand.address.segment ?? "DS") as "DS");
         return operand.width === 8 ? this.read8(segment, disp) : this.read16(segment, disp);
       }
-      default:
+      case "none":
+        // An instruction with no operand, such as HLT. There is nothing to read.
         return 0;
+      default:
+        return this.unhandledOperand("read", operand);
     }
   }
 
@@ -300,9 +345,18 @@ export class Cpu {
         else this.write16(segment, disp, value);
         return;
       }
-      default:
-        // An immediate or a branch target is never a destination on the 8086.
+      case "imm":
+      case "rel":
+      case "farptr":
+        // An immediate, a branch target and a far pointer are never a
+        // destination on the 8086. That is a fact about the instruction set
+        // rather than a gap in the CPU, so it is written down here instead of
+        // falling out of a default.
         return;
+      case "none":
+        return;
+      default:
+        this.unhandledOperand("write", operand);
     }
   }
 
@@ -436,7 +490,18 @@ export class Cpu {
       // ------------------------------------------------------------- moves
       case "MOV": {
         // MOV between a register and memory/reg/immediate, and MOV moffs.
-        if (mod?.rm !== undefined && mod.reg !== undefined && (op === 0x88 || op === 0x89)) {
+        if (def.modrm?.sreg !== undefined && mod?.rm !== undefined) {
+          // 8C/8E put a segment register in the ModR/M *reg* field and have no
+          // ordinary reg operand, so they look exactly like the C6/C7
+          // "r/m <- imm" group below and used to be executed as it: the store
+          // went to the register named in r/m, which for `MOV ES, AX` is AX
+          // itself. The instruction then read back as a no-op, and every
+          // segment address after it silently used the old segment.
+          const sreg = ops[def.modrm.sreg];
+          const rm = ops[mod.rm];
+          if (op === 0x8c) this.writeOperand(rm, this.readOperand(sreg));
+          else this.writeOperand(sreg, this.readOperand(rm));
+        } else if (mod?.rm !== undefined && mod.reg !== undefined && (op === 0x88 || op === 0x89)) {
           // 88/89: r/m <- r
           this.writeOperand(ops[mod.rm], this.readOperand(ops[mod.reg]));
         } else if (mod?.rm !== undefined && mod.reg !== undefined) {
@@ -449,11 +514,17 @@ export class Cpu {
           // C6/C7: r/m <- imm
           this.writeOperand(ops[mod.rm], this.readOperand(ops[mod.rm + 1]));
         } else {
-          // A0-A3: accumulator <-> moffs. Intel prints `MOV AX, moffs16`, so
-          // the accumulator is operand 0 and the address is operand 1.
+          // A0-A3: accumulator <-> moffs. The table prints the accumulator
+          // first for a load (`MOV AX, moffs16`) and second for a store
+          // (`MOV moffs16, AX`), so the address is taken from the table's own
+          // `moffs` slot rather than from a fixed index -- which is how the
+          // store ended up writing the accumulator into the accumulator.
+          const slot = def.moffs;
+          const address = slot === undefined ? undefined : ops[slot];
+          if (address === undefined) return;
           const isLoad = op === 0xa0 || op === 0xa1;
-          if (isLoad) this.setAccumulator(this.readOperand(ops[1]));
-          else this.writeOperand(ops[1], this.getAccumulator());
+          if (isLoad) this.setAccumulator(this.readOperand(address));
+          else this.writeOperand(address, this.getAccumulator());
         }
         return;
       }

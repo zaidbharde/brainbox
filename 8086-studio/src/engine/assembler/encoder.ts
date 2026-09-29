@@ -404,6 +404,14 @@ export function emit(def: InsnDef, request: EncodeRequest, diagnostics: Diagnost
     }
     const disp = (operand.address.disp ?? 0) & 0xffff;
     bytes.push(disp & 0xff, (disp >> 8) & 0xff);
+    // A direct offset is still a segment-relative address, and an explicit
+    // override means as much here as it does on a ModR/M form. Dropping it
+    // assembled to bytes that reach a different segment, which is not a
+    // different program but the same program with a silent mistake in it.
+    // The default is DS: with no base register there is no BP to make it SS.
+    if (operand.address.segment && operand.address.segment !== "DS") {
+      segmentPrefix = SEGMENT_PREFIX[operand.address.segment];
+    }
   }
 
   if (def.rel) {
