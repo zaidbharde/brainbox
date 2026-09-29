@@ -34,9 +34,10 @@ import { StackFramePanel } from '@/components/lab/StackFramePanel';
 import { InterruptIOPanel } from '@/components/lab/InterruptIOPanel';
 import { compile, CompilationResult, SourceLanguage, SAMPLE_PROGRAMS_BY_LANGUAGE } from '@/compiler/compiler';
 import { detectFrontendLanguage } from '@/compiler/transpiler';
-import { runProgram, createInitialState, ProgramOutput } from '@/emulator/cpu';
+import { createInitialState, ProgramOutput } from '@/emulator/cpu';
 import { assemble } from '@/emulator/assembler';
 import { AssembledProgram, CPUState, Instruction } from '@/types/cpu';
+import { createSession, engineFromQuery } from '@/lab/execution-engine';
 import { executeStepWithDiagnostics } from '@/lab/debugger';
 import { ASSEMBLY_DEMOS } from '@/lab/demos';
 import { createInitialPerformanceMetrics, updatePerformanceMetrics } from '@/lab/performance';
@@ -1295,17 +1296,16 @@ export function App() {
   ]);
 
   const runAssemblySource = useCallback((source: string): string => {
-    const program = assemble(source);
-    const hardErrors = program.errors.filter((error) => error.type === 'error');
-    if (hardErrors.length > 0) {
-      return `Error:\n${hardErrors.map((error) => `Line ${error.line}: ${error.message}`).join('\n')}`;
+    const engine = engineFromQuery(window.location.search);
+    const { session, diagnostics } = createSession(engine, source);
+    if (session === null || diagnostics.length > 0) {
+      return `Error:\n${diagnostics.map((d) => `Line ${d.line}: ${d.message}`).join('\n')}`;
     }
 
-    const inInstructions = program.instructions.filter((instruction) => instruction.opcode.toUpperCase() === 'IN');
     const inputs: number[] = [];
-    for (let i = 0; i < inInstructions.length; i++) {
-      const port = inInstructions[i].operands[1] ?? '?';
-      const raw = window.prompt(`Input required for IN port ${port} (#${i + 1})`, '0');
+    const prompts = session.inputPrompts();
+    for (let i = 0; i < prompts.length; i++) {
+      const raw = window.prompt(`Input required for IN port ${prompts[i]} (#${i + 1})`, '0');
       if (raw === null) {
         return 'Run cancelled by user.';
       }
@@ -1316,10 +1316,10 @@ export function App() {
       inputs.push(Math.trunc(value));
     }
 
-    const { finalState, output } = runProgram(program, 10000, inputs);
-    let outputText = formatOutput(output);
-    outputText += finalState.error
-      ? `\n\nError: ${finalState.error}`
+    const { state, output } = session.runToCompletion(inputs, 10000);
+    let outputText = formatOutput([...output]);
+    outputText += state.error
+      ? `\n\nError: ${state.error}`
       : '\n\nProgram completed successfully';
     return outputText;
   }, []);
@@ -1411,17 +1411,33 @@ export function App() {
 
     setCompilationResult(result);
     
-    if (result.success && result.program) {
+    if (result.success && result.assembly) {
+      const engine = engineFromQuery(window.location.search);
+      const { session, diagnostics } = createSession(engine, result.assembly);
+      if (session === null) {
+        const errorStr = diagnostics.map((d) => `Line ${d.line}: ${d.message}`).join('\n');
+        setRunOutput(`Compilation failed:\n\n${errorStr}`);
+        setEditorTab('output');
+        return;
+      }
+
       const sourceInputVars = result.translatedSource
         .split('\n')
         .map((line) => line.trim())
         .map((line) => line.match(/^input\s+([A-Za-z_][A-Za-z0-9_]*)$/)?.[1] ?? null)
         .filter((name): name is string => name !== null);
-      const inputPrompts = sourceInputVars.length > 0
-        ? sourceInputVars
-        : result.program.instructions
-            .filter((instruction) => instruction.opcode.toUpperCase() === 'IN')
-            .map((_, index) => `input_${index + 1}`);
+      // The engines take input in different shapes, so the prompt is asked of the
+      // engine rather than decided here. The legacy wants one number per `IN` and
+      // says which port; the new engine wants a character queue whose length the
+      // program decides at run time, and a number collected for an `IN` would
+      // never be read by it, so it asks for nothing and the run reads a defined
+      // empty queue. Collecting a value here that the engine then ignores would be
+      // worse than not asking: the run would look fed when it was not.
+      const inputPrompts = engine === 'legacy'
+        ? (sourceInputVars.length > 0
+            ? sourceInputVars
+            : session.inputPrompts().map((_, index) => `input_${index + 1}`))
+        : [];
       const inputs: number[] = [];
       for (const inputName of inputPrompts) {
         const raw = window.prompt(`Enter value for ${inputName}:`, '0');
@@ -1439,11 +1455,11 @@ export function App() {
         inputs.push(Math.trunc(value));
       }
 
-      const { finalState, output } = runProgram(result.program, 10000, inputs);
-      let outputStr = formatOutput(output);
+      const { state, output } = session.runToCompletion(inputs, 10000);
+      let outputStr = formatOutput([...output]);
       
-      if (finalState.error) {
-        outputStr += `\n\nError: ${finalState.error}`;
+      if (state.error) {
+        outputStr += `\n\nError: ${state.error}`;
       } else {
         outputStr += '\n\nProgram completed successfully';
       }

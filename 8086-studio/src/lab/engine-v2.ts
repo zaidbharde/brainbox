@@ -170,6 +170,41 @@ export function findV2SourceLine(
 }
 
 /**
+ * A CPU for an assembled program, set up the way the program asked to be.
+ *
+ * The assembler's entry point is used, not the origin: a program that opens with
+ * data has its first instruction somewhere after where it was loaded, and
+ * starting execution at the origin would run through the data. Segment registers
+ * come from the layout too, so a program with distinct code, data and stack
+ * segments is set up the way it asked to be.
+ *
+ * The input queue is a construction argument rather than something set later,
+ * because the services that read input consume it as they go and a queue that
+ * appeared halfway through a run would have to be threaded through the CPU.
+ */
+function buildCpu(assembly: V2Assembly, inputValues: readonly number[]): Cpu {
+  const memory = new Memory();
+  for (const segment of assembly.segments) {
+    memory.bytes.set(segment.bytes, physicalAddress(segment.base, segment.origin));
+  }
+  const { entry } = assembly;
+  return new Cpu(
+    memory,
+    {
+      ...createEngineState(),
+      CS: entry.codeBase,
+      DS: entry.dataBase,
+      ES: entry.dataBase,
+      SS: entry.stackBase,
+      IP: entry.ip,
+      SP: entry.sp,
+      FLAGS: 0x0002,
+    },
+    { inputValues: [...inputValues] },
+  );
+}
+
+/**
  * A program being debugged by the new engine.
  *
  * One of these owns the engine's own state, so a step is a real step: there is no
@@ -183,12 +218,25 @@ export class V2Session {
   /** Which segment `mirror` and `sourceLine` are talking about, by name. */
   private readonly codeSegment: string;
   private readonly sourceMap: readonly V2SourceMapEntry[];
+  /**
+   * The assembly this session was built from, kept so a whole-program run can
+   * start a second CPU from the same image. The run button is a fresh run, and
+   * the only honest way to get one out of a session that has already been
+   * stepped is to reassemble from the same thing rather than rewind.
+   */
+  private readonly assembly: V2Assembly;
   private outputLength = 0;
 
-  private constructor(cpu: Cpu, codeSegment: string, sourceMap: readonly V2SourceMapEntry[]) {
+  private constructor(
+    cpu: Cpu,
+    codeSegment: string,
+    sourceMap: readonly V2SourceMapEntry[],
+    assembly: V2Assembly,
+  ) {
     this.cpu = cpu;
     this.codeSegment = codeSegment;
     this.sourceMap = sourceMap;
+    this.assembly = assembly;
     this.mirror = new Uint8Array(SEGMENT_SIZE);
     this.refreshMemory();
   }
@@ -202,31 +250,12 @@ export class V2Session {
   static create(source: string, origin: number = COM_ORIGIN): { session: V2Session | null; assembly: V2Assembly } {
     const assembly = assembleV2(source, origin);
     if (assembly.diagnostics.length > 0) return { session: null, assembly };
-
-    const memory = new Memory();
-    for (const segment of assembly.segments) {
-      memory.bytes.set(segment.bytes, physicalAddress(segment.base, segment.origin));
-    }
-
-    // The assembler's entry point, not the origin: a program that opens with data
-    // has its first instruction somewhere after where it was loaded, and starting
-    // execution at the origin would run through the data. Segment registers come
-    // from the layout too, so a program with distinct code, data and stack
-    // segments is set up the way it asked to be.
-    const { entry } = assembly;
-    const base = createEngineState();
-    const cpu = new Cpu(memory, {
-      ...base,
-      CS: entry.codeBase,
-      DS: entry.dataBase,
-      ES: entry.dataBase,
-      SS: entry.stackBase,
-      IP: entry.ip,
-      SP: entry.sp,
-      FLAGS: 0x0002,
-    });
-    const codeSegment = assembly.segments.find((segment) => segment.base === entry.codeBase)?.name ?? '';
-    return { session: new V2Session(cpu, codeSegment, assembly.sourceMap), assembly };
+    const codeSegment = assembly.segments.find((segment) => segment.base === assembly.entry.codeBase)?.name ?? '';
+    // A stepping session is never given input: it has no way to ask for it, since
+    // the debugger reads from the queue that only a whole-program run can fill.
+    // That is the remaining gap in this engine's input story, recorded below.
+    const cpu = buildCpu(assembly, []);
+    return { session: new V2Session(cpu, codeSegment, assembly.sourceMap, assembly), assembly };
   }
 
   /** The entry point the assembler chose, which the debugger highlights first. */
@@ -261,20 +290,71 @@ export class V2Session {
 
   /** The state, in the shape the lab stores and every component already reads. */
   get state(): CPUState {
-    const s = this.cpu.state;
+    return this.stateOf(this.cpu, this.mirror);
+  }
+
+  /**
+   * The lab's shape for a CPU, optionally against a different memory array.
+   *
+   * A whole-program run has its own CPU and so its own memory, and the mirror
+   * belonging to the stepped session must not be handed back with it: the run's
+   * final memory is what the output panel's "Data Segment" view should show.
+   */
+  private stateOf(cpu: Cpu, mirror: Uint8Array = new Uint8Array(SEGMENT_SIZE)): CPUState {
+    const s = cpu.state;
     const registers: Registers = {
       AX: s.AX & 0xffff, BX: s.BX & 0xffff, CX: s.CX & 0xffff, DX: s.DX & 0xffff,
       CS: s.CS & 0xffff, DS: s.DS & 0xffff, ES: s.ES & 0xffff, SS: s.SS & 0xffff,
       SI: s.SI & 0xffff, DI: s.DI & 0xffff, SP: s.SP & 0xffff, BP: s.BP & 0xffff,
       IP: s.IP & 0xffff, FLAGS: s.FLAGS & 0xffff,
     };
-    return { registers, memory: this.mirror, halted: s.halted, error: s.error };
+    if (mirror !== this.mirror) mirror.set(this.segmentOf(cpu));
+    return { registers, memory: mirror, halted: s.halted, error: s.error };
   }
 
   /** Decode the instruction at IP, for the trace and the inspector. */
   decodeAt(ip: number): DecodedInstruction {
     const physical = this.segmentBase() + (ip & 0xffff);
     return decode(this.cpu.memory.bytes.subarray(physical, physical + 16));
+  }
+
+  /**
+   * Nothing to prompt for, because this engine has no per-instruction input.
+   *
+   * The legacy is the one with a static answer: it has no DOS read services at
+   * all, so its entire input model is the Run button writing a number into the
+   * port window for each `IN` to read, and a program using it names its inputs
+   * in the source.
+   *
+   * This engine inverts both halves. `IN` reads a port window that only `OUTP`
+   * writes, so a number collected for an `IN` would never be read; and the input
+   * that does work here is a character queue behind the DOS read services, whose
+   * length is decided by how many times the program asks rather than by what is
+   * in the source, so there is nothing to count up front. A program using those
+   * services therefore prompts for nothing and reads an empty queue.
+   *
+   * Empty is a defined answer rather than a hang: the queue is finite and
+   * returns zero when it runs dry, so a run behaves instead of waiting for a
+   * keystroke that the debugger cannot deliver. Wiring a real input stream is
+   * the remaining work here, and it belongs with the debug view's rewrite.
+   */
+  inputPrompts(): readonly string[] {
+    return [];
+  }
+
+  /**
+   * Run the whole program on a second CPU built from the same image.
+   *
+   * A second CPU rather than a reset of this one, because this session may
+   * already have been stepped and the run button means "start again". Output is
+   * the whole of it rather than a slice, since there is no previous run to
+   * subtract.
+   */
+  runToCompletion(inputs: readonly number[], maxSteps: number): { state: CPUState; output: ProgramOutput[] } {
+    const cpu = buildCpu(this.assembly, inputs);
+    cpu.run(maxSteps);
+    const state = this.stateOf(cpu);
+    return { state, output: cpu.output as ProgramOutput[] };
   }
 
   /**
@@ -347,9 +427,14 @@ export class V2Session {
     return (this.cpu.state.CS & 0xffff) << 4;
   }
 
+  /** The code segment of a CPU, as a view for copying into a mirror. */
+  private segmentOf(cpu: Cpu): Uint8Array {
+    const base = (cpu.state.CS & 0xffff) << 4;
+    return cpu.memory.bytes.subarray(base, base + SEGMENT_SIZE);
+  }
+
   private refreshMemory(): void {
-    const base = this.segmentBase();
-    this.mirror.set(this.cpu.memory.bytes.subarray(base, base + SEGMENT_SIZE));
+    this.mirror.set(this.segmentOf(this.cpu));
   }
 
   /**

@@ -12,12 +12,13 @@
  * session to the views that already exist.
  */
 
-import { createInitialState as createLegacyState } from '@/emulator/cpu';
+import { createInitialState as createLegacyState, runProgram as runLegacyProgram } from '@/emulator/cpu';
 import { assemble as assembleLegacy } from '@/emulator/assembler';
 import { executeStepWithDiagnostics } from '@/lab/debugger';
 import { buildSourceMapEntries, findSourceLineForInstruction } from '@/lab/source-map';
 import { V2Session } from '@/lab/engine-v2';
 import type { AssembledProgram, CPUState } from '@/types/cpu';
+import type { ProgramOutput } from '@/emulator/cpu';
 import type { SourceMapEntry, StepDiagnostics } from '@/lab/types';
 
 /** Which engine the lab is running. The URL parameter's only accepted value. */
@@ -42,6 +43,41 @@ export interface DebugSession {
   sourceLineAt(ip: number): number | null;
   /** True once the program has finished, however it finished. */
   isFinished(): boolean;
+  /**
+   * What to ask the user for, one entry per input the program reads, in the
+   * order it reads them.
+   *
+   * The lab prompts for these before it runs anything, because `window.prompt`
+   * cannot be called from inside an execution loop.
+   *
+   * The two engines answer this differently, and the interface is where that
+   * becomes visible rather than a surprise at the prompt. The legacy returns one
+   * entry per `IN`, naming the port: it has no DOS read services, so that is its
+   * whole input model. The new engine returns none, because its input is a
+   * character queue behind DOS read services, whose length the program decides at
+   * run time, and the numbers this method carries would not reach its `IN`. Both
+   * still *run* correctly with nothing supplied. See `docs/engine-v2-divergences.md`.
+   */
+  inputPrompts(): readonly string[];
+  /**
+   * Run the whole program from the start and report where it finished.
+   *
+   * From the start, not from wherever a session has been stepped to: the Run
+   * button is a fresh run even after a debugging session, and reusing a stepped
+   * session would silently continue from wherever the user stopped.
+   *
+   * `inputs` is whatever `inputPrompts` asked for, which the two engines spend
+   * differently: the legacy writes each value into the port window its `IN` reads,
+   * and the new engine appends each to the character queue its DOS read services
+   * consume. Passing none is always valid on both.
+   */
+  runToCompletion(inputs: readonly number[], maxSteps: number): RunResult;
+}
+
+/** Where a whole-program run finished, in the lab's shapes. */
+export interface RunResult {
+  readonly state: CPUState;
+  readonly output: readonly ProgramOutput[];
 }
 
 export interface CreateSessionResult {
@@ -142,6 +178,17 @@ class LegacySession implements DebugSession {
 
   isFinished(): boolean {
     return this.current.halted;
+  }
+
+  inputPrompts(): readonly string[] {
+    return this.program.instructions
+      .filter((instruction) => instruction.opcode.toUpperCase() === 'IN')
+      .map((instruction) => instruction.operands[1] ?? '?');
+  }
+
+  runToCompletion(inputs: readonly number[], maxSteps: number): RunResult {
+    const { finalState, output } = runLegacyProgram(this.program, maxSteps, [...inputs]);
+    return { state: finalState, output };
   }
 }
 

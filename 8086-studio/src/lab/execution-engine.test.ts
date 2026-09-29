@@ -145,6 +145,120 @@ describe.each(ENGINES)('%s session', (engine) => {
   });
 });
 
+describe.each(ENGINES)('%s runToCompletion', (engine) => {
+  it('finishes in the same place as stepping to the end', () => {
+    // The Run button and Step Over must not be two different programs. Stepping
+    // is what the debugger does and running is what the Run button does, so a
+    // program that computes the same answer both ways is the only evidence that
+    // the run path was actually wired to this engine rather than left on legacy.
+    const source = [
+      'MOV AX, 0004h',
+      'ADD AX, 0003h',
+      'MOV [0200h], AX',
+      'HLT',
+    ].join('\n');
+
+    const stepped = runToEnd(engine, source).state;
+    const ran = session(engine, source).runToCompletion([], 10_000).state;
+
+    expect(ran.halted).toBe(true);
+    expect(ran.error).toBeFalsy();
+    expect(ran.registers.AX).toBe(7);
+    for (const name of ['AX', 'BX', 'CX', 'DX'] as const) {
+      expect(ran.registers[name]).toBe(stepped.registers[name]);
+    }
+  });
+
+  it('reports the memory the run left behind', () => {
+    const { state } = session(engine, 'MOV AX, 1234h\nMOV [0200h], AX\nHLT\n').runToCompletion([], 10_000);
+    expect(state.memory[0x200] | (state.memory[0x201] << 8)).toBe(0x1234);
+  });
+
+  it('collects the printed text as output', () => {
+    // Output, not just registers: the Run button's output panel is built from
+    // this, and a run that computed the right answer silently would show nothing.
+    // Containment rather than equality because the legacy pads this program with
+    // NULs, which is a difference of its own and is pinned below.
+    const { output } = session(engine, PRINT_PROGRAM).runToCompletion([], 10_000);
+    const text = output.map((entry) => (entry.type === 'char' ? String.fromCharCode(entry.value) : String(entry.value)));
+    expect(text.join('')).toContain('Ok');
+  });
+
+  it('starts from the beginning even after the session was stepped', () => {
+    // The Run button means "run it again" whatever the debugger did first, so a
+    // session that has already advanced must not continue from where it stopped.
+    const source = 'MOV AX, 0001h\nMOV BX, 0002h\nHLT\n';
+    const s = session(engine, source);
+    s.step(1, 0);
+    s.step(2, 0);
+    expect(s.state.registers.BX).toBe(2);
+
+    const ran = s.runToCompletion([], 10_000);
+    expect(ran.state.halted).toBe(true);
+    expect(ran.state.registers.AX).toBe(1);
+    expect(ran.state.registers.BX).toBe(2);
+  });
+
+  it('leaves the stepped session itself untouched', () => {
+    // The run happens on a second CPU, so asking for a run must not disturb the
+    // state the debugger is showing. If it did, running would silently reset the
+    // debugger's view of where the program is.
+    const s = session(engine, 'MOV AX, 0001h\nHLT\n');
+    s.step(1, 0);
+    const before = s.state.registers.AX;
+
+    s.runToCompletion([], 10_000);
+    expect(s.state.registers.AX).toBe(before);
+  });
+
+  it('stops at the step limit with an error instead of running forever', () => {
+    const { state } = session(engine, 'spin: JMP spin\n').runToCompletion([], 50);
+    expect(state.error).toBeTruthy();
+  });
+});
+
+describe('input, which the two engines do differently', () => {
+  it('asks for one value per IN on the legacy, naming the port', () => {
+    // The legacy has no DOS read services at all, so this is its entire input
+    // model: the Run button writes a number into the port window and `IN` reads
+    // it. The port is in the prompt so the user can tell the reads apart.
+    const prompts = session('legacy', 'IN AL, 30h\nIN AL, 31h\nHLT\n').inputPrompts();
+    expect(prompts.length).toBe(2);
+    expect(prompts[0]).toBeTruthy();
+    expect(prompts[1]).toBeTruthy();
+    expect(prompts[0]).not.toBe(prompts[1]);
+  });
+
+  it('asks for nothing when a program reads no input', () => {
+    expect(session('legacy', 'MOV AX, 1\nHLT\n').inputPrompts()).toEqual([]);
+  });
+
+  it('feeds those values to a legacy IN', () => {
+    const { state } = session('legacy', 'IN AL, 30h\nMOV [0200h], AL\nHLT\n').runToCompletion([7], 10_000);
+    expect(state.memory[0x200]).toBe(7);
+  });
+
+  it('asks for nothing on the new engine, because a number would not be read', () => {
+    // A v2 program's input is a character queue behind the DOS read services, and
+    // its `IN` reads a port window that only `OUTP` writes. So neither the
+    // per-`IN` number the legacy wants nor the declared `input` names would ever
+    // be read, and the count is not knowable before the program runs. Returning
+    // nothing is the honest answer; a prompt the engine ignores would be worse.
+    expect(session('v2', 'IN AL, 30h\nHLT\n').inputPrompts()).toEqual([]);
+    expect(session('v2', 'MOV AH, 01h\nINT 21h\nHLT\n').inputPrompts()).toEqual([]);
+  });
+
+  it('runs a v2 program that asks for input, reading an empty queue rather than hanging', () => {
+    // The point of the empty list being safe: DOS blocks on real hardware, so
+    // this has to terminate. The queue is finite and returns zero when dry.
+    const { state } = session('v2', 'MOV AX, 0\nMOV AH, 01h\nINT 21h\nHLT\n').runToCompletion([], 10_000);
+    expect(state.halted).toBe(true);
+    expect(state.error).toBeFalsy();
+    // AL is the character read, and a dry queue leaves it as the program had it.
+    expect(state.registers.AX & 0xff).toBe(0);
+  });
+});
+
 describe('the two engines agree where both are defined', () => {
   // 200h, not 100h: the new engine loads a .COM image at 100h, so code lives
   // there and storing to 100h would overwrite the program.
@@ -246,5 +360,37 @@ describe('where the engines genuinely differ', () => {
     const source = 'MOV AX, 1\nMOV BX, 2\nHLT\n';
     expect(session('v2', source).sourceLineAt(0x100)).toBe(1);
     expect(session('legacy', source).sourceLineAt(0)).toBeNull();
+  });
+
+  it('pads a print-string run with NULs on the legacy only', () => {
+    // The Run button's output panel shows this stream as it comes, so the legacy
+    // puts a line of NUL characters in front of the message it printed, while the
+    // new engine prints just the two characters. The Run path is wired to both
+    // engines now, so this is visible on either depending on the URL parameter.
+    //
+    // It is the legacy's own behaviour and is left alone on purpose: the Run
+    // button called the same `runProgram` before the switch existed, so this is
+    // not something the wiring introduced. Pinned so that a change to either
+    // engine which quietly removes it is noticed, and so the two are not assumed
+    // to agree.
+    const text = (engine: EngineId): string => {
+      const { output } = session(engine, PRINT_PROGRAM).runToCompletion([], 10_000);
+      return output
+        .map((entry) => (entry.type === 'char' ? String.fromCharCode(entry.value) : String(entry.value)))
+        .join('');
+    };
+
+    expect(text('v2')).toBe('Ok');
+    expect(text('legacy')).toMatch(/^\u0000+Ok$/);
+  });
+
+  it('takes input in different shapes, so only the legacy prompts', () => {
+    // Recorded together because it is one difference, not two. The legacy has no
+    // DOS read services and reads a port window the Run button pre-fills, so it
+    // can name its inputs in the source. The new engine reads a character queue
+    // behind DOS services instead, and its `IN` reads a port window that only
+    // `OUTP` writes, so a number collected for it would be discarded.
+    expect(session('legacy', 'IN AL, 30h\nHLT\n').inputPrompts().length).toBe(1);
+    expect(session('v2', 'IN AL, 30h\nHLT\n').inputPrompts()).toEqual([]);
   });
 });
