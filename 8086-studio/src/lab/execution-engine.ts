@@ -15,7 +15,7 @@
 import { createInitialState as createLegacyState, runProgram as runLegacyProgram } from '@/emulator/cpu';
 import { assemble as assembleLegacy } from '@/emulator/assembler';
 import { executeStepWithDiagnostics } from '@/lab/debugger';
-import { buildSourceMapEntries, findSourceLineForInstruction } from '@/lab/source-map';
+import { buildSourceMapEntries, findInstructionForSourceLine, findSourceLineForInstruction } from '@/lab/source-map';
 import { V2Session } from '@/lab/engine-v2';
 import type { AssembledProgram, CPUState, Instruction } from '@/types/cpu';
 import type { ProgramOutput } from '@/emulator/cpu';
@@ -64,6 +64,29 @@ export interface DebugSession {
   restore(state: CPUState): void;
   /** The source line the program is stopped on, or null if it cannot be said. */
   sourceLineAt(ip: number): number | null;
+  /**
+   * The first address a source line produced, or null if the line produced none.
+   *
+   * The other direction of `sourceLineAt`, and needed because the source panel
+   * hands the lab a line number and wants an instruction back. Where a line
+   * produced more than one instruction -- a macro, or a count -- the first is the
+   * one a person reading that line meant.
+   *
+   * The legacy answers null for hand-written assembly, because it keeps no line
+   * map for it. That is the divergence the source panel has always had, and a
+   * null here is what makes clicking a line do nothing there rather than select
+   * the wrong instruction.
+   */
+  addressAtSourceLine(line: number): number | null;
+  /**
+   * The whole source map, for the source panel to draw.
+   *
+   * Exposed because the panel needs every line, not just the one it is stopped
+   * on, and building it in the lab meant building it from a legacy program --
+   * which is the one thing the new engine does not have. Empty on the legacy for
+   * hand-written assembly, which is why that panel has never marked lines there.
+   */
+  sourceMapEntries(): readonly SourceMapEntry[];
   /**
    * The instruction at an address, or null when the engine cannot say.
    *
@@ -247,6 +270,14 @@ export class LegacySession implements DebugSession {
 
   sourceLineAt(ip: number): number | null {
     return findSourceLineForInstruction(this.sourceMap, ip);
+  }
+
+  addressAtSourceLine(line: number): number | null {
+    return findInstructionForSourceLine(this.sourceMap, line);
+  }
+
+  sourceMapEntries(): readonly SourceMapEntry[] {
+    return this.sourceMap;
   }
 
   /**

@@ -1,6 +1,7 @@
-import { CPUState, Instruction } from '@/types/cpu';
+import { CPUState } from '@/types/cpu';
+import type { InstructionParts } from '@/lab/types';
 
-function parseInstructionText(instruction: Instruction | null | undefined): { opcode: string; operands: string[] } | null {
+function parseInstructionText(instruction: InstructionParts | null | undefined): { opcode: string; operands: string[] } | null {
   if (!instruction) {
     return null;
   }
@@ -11,7 +12,7 @@ function parseInstructionText(instruction: Instruction | null | undefined): { op
 }
 
 export function buildSymbolicHints(
-  instruction: Instruction | null | undefined,
+  instruction: InstructionParts | null | undefined,
   state: CPUState
 ): string[] {
   const parsed = parseInstructionText(instruction);

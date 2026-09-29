@@ -834,3 +834,49 @@ describe('triggerSoftwareInterrupt', () => {
     expect(new Set(outcomes).size, `the engines disagreed: ${outcomes.join(' | ')}`).toBe(1);
   });
 });
+
+/**
+ * Line to address, which is the other direction.
+ *
+ * The source panel hands the lab a line number and wants an instruction. It is
+ * the same map as `sourceLineAt` read the other way, so it is on the session
+ * rather than something the lab works out from a legacy program -- a legacy
+ * program is the one thing the new engine does not have.
+ */
+describe('addressAtSourceLine', () => {
+  const SOURCE = ['MOV AX, 1', 'ADD AX, 2', 'HLT'].join('\n');
+
+  it('the new engine maps a line to the address it produced', () => {
+    const subject = session('v2', SOURCE);
+    expect(subject.addressAtSourceLine(1)).not.toBeNull();
+    for (const line of [1, 2, 3]) {
+      const address = subject.addressAtSourceLine(line);
+      expect(subject.sourceLineAt(address!), `line ${line} round trips`).toBe(line);
+    }
+  });
+
+  it('the three lines land on three ascending addresses', () => {
+    const subject = session('v2', SOURCE);
+    const addresses = [1, 2, 3].map((line) => subject.addressAtSourceLine(line));
+    expect(addresses.every((address) => address !== null)).toBe(true);
+    expect(addresses[0]!).toBeLessThan(addresses[1]!);
+    expect(addresses[1]!).toBeLessThan(addresses[2]!);
+  });
+
+  it('a line that produced nothing has no address', () => {
+    const subject = session('v2', SOURCE);
+    expect(subject.addressAtSourceLine(99)).toBeNull();
+    expect(subject.addressAtSourceLine(0)).toBeNull();
+  });
+
+  it('the legacy has no line map for hand-written assembly, and says so', () => {
+    // Already true -- this is the divergence the source panel has always had --
+    // and worth pinning because the panel's behaviour depends on it. A null here
+    // is what makes "click a source line" do nothing on the legacy rather than
+    // selecting the wrong instruction.
+    const subject = session('legacy', SOURCE);
+    expect(subject.addressAtSourceLine(1)).toBeNull();
+    expect(subject.addressAtSourceLine(3)).toBeNull();
+    expect(subject.sourceLineAt(0), 'and the other direction is empty too').toBeNull();
+  });
+});

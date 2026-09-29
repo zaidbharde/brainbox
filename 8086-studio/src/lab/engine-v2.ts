@@ -38,7 +38,7 @@ import { decode, formatOperand, type DecodedInstruction } from '@/engine/cpu/dec
 import { parentRegisterOf, registerEffects } from '@/engine/cpu/effects';
 import { getFlags, type ProgramOutput } from '@/emulator/cpu';
 import type { CPUState, Registers } from '@/types/cpu';
-import type { InstructionView, StepDiagnostics, TraceEntry } from '@/lab/types';
+import type { InstructionView, SourceMapEntry, StepDiagnostics, TraceEntry } from '@/lab/types';
 
 /** Where a .COM program starts, and the default the lab has always used. */
 const COM_ORIGIN = 0x100;
@@ -296,6 +296,29 @@ export class V2Session {
    */
   sourceLineAt(ip: number): number | null {
     return findV2SourceLine(this.sourceMap, this.codeSegment, ip & 0xffff);
+  }
+
+  sourceMapEntries(): readonly SourceMapEntry[] {
+    // The segment comes off: the panel is drawing one source file against one
+    // code segment, and an entry tagged with the segment it came from would be
+    // a field it has to ignore.
+    return this.sourceMap
+      .filter((entry) => entry.segment === this.codeSegment)
+      .map((entry) => ({
+        sourceLine: entry.sourceLine,
+        instructionStart: entry.instructionStart,
+        instructionEnd: entry.instructionEnd,
+      }));
+  }
+
+  addressAtSourceLine(line: number): number | null {
+    // The first instruction the line produced. A line the assembler expanded --
+    // a macro, or a repeat count -- produced several, and the first is the one
+    // the person reading the source line meant.
+    for (const entry of this.sourceMap) {
+      if (entry.sourceLine === line) return entry.instructionStart;
+    }
+    return null;
   }
 
   /**

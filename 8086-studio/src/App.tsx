@@ -36,9 +36,8 @@ import { compile, CompilationResult, SourceLanguage, SAMPLE_PROGRAMS_BY_LANGUAGE
 import { detectFrontendLanguage } from '@/compiler/transpiler';
 import { createInitialState, ProgramOutput } from '@/emulator/cpu';
 import { assemble } from '@/emulator/assembler';
-import { AssembledProgram, CPUState, Instruction } from '@/types/cpu';
-import { createSession, engineFromQuery } from '@/lab/execution-engine';
-import { executeStepWithDiagnostics } from '@/lab/debugger';
+import { AssembledProgram, CPUState } from '@/types/cpu';
+import { createSession, engineFromQuery, legacySession, type DebugSession } from '@/lab/execution-engine';
 import { ASSEMBLY_DEMOS } from '@/lab/demos';
 import { createInitialPerformanceMetrics, updatePerformanceMetrics } from '@/lab/performance';
 import {
@@ -54,6 +53,7 @@ import {
   PerformanceMetrics,
   PipelineState,
   ReplaySession,
+  InstructionView,
   SavedSnapshot,
   SourceMapEntry,
   SnapshotComparison,
@@ -68,7 +68,6 @@ import { evaluateWatchExpressions } from '@/lab/watch';
 import { analyzeBranchPrediction } from '@/lab/branch-predictor';
 import { simulateCache } from '@/lab/cache-simulator';
 import { analyzePipelineHazards } from '@/lab/hazards';
-import { buildSourceMapEntries, findInstructionForSourceLine, findSourceLineForInstruction } from '@/lab/source-map';
 import { buildSymbolicHints } from '@/lab/symbolic-hints';
 import { AssertionResult, runTestbenchAssertions } from '@/lab/testbench';
 import { createReplaySession, parseReplaySession, serializeReplaySession } from '@/lab/replay';
@@ -325,6 +324,8 @@ export function App() {
   const [asmCode, setAsmCode] = useState('');
   const [compilationResult, setCompilationResult] = useState<CompilationResult | null>(null);
   const [debugProgram, setDebugProgram] = useState<AssembledProgram | null>(null);
+  const [debugSession, setDebugSession] = useState<DebugSession | null>(null);
+  const [debugInitialState, setDebugInitialState] = useState<CPUState | null>(null);
   const [editorTab, setEditorTab] = useState<EditorTab>('source');
   const [runOutput, setRunOutput] = useState<string>('');
   const [isCompiling, setIsCompiling] = useState(false);
@@ -486,12 +487,33 @@ export function App() {
     return null;
   }, [watchpoints]);
 
-  const initializeDebugSession = useCallback((program: AssembledProgram, origin: DebugOrigin, demoId: string | null = null) => {
-    const initialState = createInitialState(program.initialMemory);
+  /**
+   * Point the debugger at a program, through a session for whichever engine the
+   * URL selected.
+   *
+   * `session` is passed in where the caller had source to assemble -- the asm
+   * editor's paths, which is how a program reaches the new engine at all. The
+   * frontend compilers are the exception: they produce a program without going
+   * through either assembler, so there is no source to hand the new engine and
+   * the debugger runs them on the legacy, which is the engine they target.
+   */
+  const initializeDebugSession = useCallback((
+    program: AssembledProgram,
+    origin: DebugOrigin,
+    session?: DebugSession,
+    demoId: string | null = null,
+  ) => {
+    // Taken from the session rather than rebuilt from a legacy program, because
+    // the new engine's initial state has real segments in it and a flat 4 KB
+    // image from the legacy assembler would not be the same machine.
+    const engineSession = session ?? legacySession(program);
+    const initialState = engineSession.state;
     const initialPerf = createInitialPerformanceMetrics();
     const initialSnapshot = createExecutionSnapshot(initialState, [], 0, initialPerf);
 
     setDebugProgram(program);
+    setDebugSession(engineSession);
+    setDebugInitialState(initialState);
     setDebugOrigin(origin);
     setActiveDemoId(demoId);
     setDebugState(initialState);
@@ -545,7 +567,7 @@ export function App() {
   }, [debugSnapshots, traceLog]);
 
   const executeCurrentInstruction = useCallback((stepLabel: 'Step Into' | 'Step Over'): boolean => {
-    if (!debugProgram || debugState.halted || debugSnapshots.length === 0) {
+    if (!debugSession || debugState.halted || debugSnapshots.length === 0) {
       return false;
     }
 
@@ -558,20 +580,17 @@ export function App() {
     const currentPerf = activeSnapshot.perf;
 
     const ip = currentState.registers.IP;
-    if (ip < 0 || ip >= debugProgram.instructions.length) {
+    if (debugSession.instructionAt(ip) === null) {
       setDebugState((state) => ({ ...state, halted: true, error: 'IP out of bounds' }));
       setDebugStatus('Execution halted: IP out of bounds.');
       return false;
     }
 
-    const instruction = debugProgram.instructions[ip];
-    const diagnostics = executeStepWithDiagnostics({
-      state: currentState,
-      instruction,
-      labels: debugProgram.labels,
-      stepNumber: branchTrace.length + 1,
-      stepStartedAtMs: performance.now(),
-    });
+    // From the snapshot under the cursor, not from wherever the engine is: the
+    // timeline can be rewound, and a step that ignored that would produce a
+    // trace disagreeing with the timeline it is drawn beside.
+    debugSession.restore(currentState);
+    const diagnostics = debugSession.step(branchTrace.length + 1, performance.now());
 
     const changedSignalCount = diagnostics.changedRegisters.length
       + diagnostics.changedFlags.length
@@ -613,7 +632,7 @@ export function App() {
 
     return true;
   }, [
-    debugProgram,
+    debugSession,
     debugState,
     getTriggeredWatchpoint,
     traceLog,
@@ -622,7 +641,7 @@ export function App() {
   ]);
 
   const runDebugStep = useCallback(async (stepLabel: 'Step Into' | 'Step Over') => {
-    if (isStepping || !debugProgram || debugState.halted) {
+    if (isStepping || !debugSession || debugState.halted) {
       return;
     }
 
@@ -630,14 +649,14 @@ export function App() {
     setIsStepping(true);
     try {
       setDebugStatus(`${stepLabel} running...`);
-      if (ip >= 0 && ip < debugProgram.instructions.length) {
+      if (debugSession.instructionAt(ip) !== null) {
         await animatePipeline(ip);
       }
       executeCurrentInstruction(stepLabel);
     } finally {
       setIsStepping(false);
     }
-  }, [animatePipeline, debugProgram, debugState.halted, debugState.registers.IP, executeCurrentInstruction, isStepping]);
+  }, [animatePipeline, debugSession, debugState.halted, debugState.registers.IP, executeCurrentInstruction, isStepping]);
 
   const debugStepInto = useCallback(() => {
     void runDebugStep('Step Into');
@@ -645,7 +664,7 @@ export function App() {
 
   const debugStepOver = useCallback(() => {
     const runStepOver = async () => {
-      if (isStepping || !debugProgram || debugState.halted || debugSnapshots.length === 0) {
+      if (isStepping || !debugSession || debugState.halted || debugSnapshots.length === 0) {
         return;
       }
 
@@ -653,13 +672,12 @@ export function App() {
       const activeSnapshot = restoreExecutionSnapshot(debugSnapshots[safeTimelineIndex]);
       let currentState = activeSnapshot.state;
       const currentIp = currentState.registers.IP;
-      const instruction = debugProgram.instructions[currentIp];
-      const localSourceMapEntries = buildSourceMapEntries(debugProgram);
-      const currentSourceLine = findSourceLineForInstruction(localSourceMapEntries, currentIp);
-      const isCallStepOver = instruction?.opcode.toUpperCase() === 'CALL';
+      const instruction = debugSession.instructionAt(currentIp);
+      const currentSourceLine = debugSession.sourceLineAt(currentIp);
+      const isCallStepOver = instruction?.isCall === true;
       const shouldRunMultiStep = isCallStepOver || currentSourceLine !== null;
 
-      if (!instruction || !shouldRunMultiStep) {
+      if (instruction === null || !shouldRunMultiStep) {
         await runDebugStep('Step Over');
         return;
       }
@@ -682,9 +700,15 @@ export function App() {
         let callDepth = 0;
         let watchpointStatus: string | null = null;
 
+        // The session is rewound once, here, to where the timeline is pointing.
+        // After that the engine and the local `currentState` advance together,
+        // step for step, so restoring per instruction would only be the
+        // expensive way of saying the same thing.
+        debugSession.restore(currentState);
+
         while (!currentState.halted && steps < MAX_DEBUG_STEPS) {
           const ip = currentState.registers.IP;
-          if (ip < 0 || ip >= debugProgram.instructions.length) {
+          if (debugSession.instructionAt(ip) === null) {
             currentState = { ...currentState, halted: true, error: 'IP out of bounds' };
             break;
           }
@@ -694,14 +718,7 @@ export function App() {
             break;
           }
 
-          const currentInstruction = debugProgram.instructions[ip];
-          const diagnostics = executeStepWithDiagnostics({
-            state: currentState,
-            instruction: currentInstruction,
-            labels: debugProgram.labels,
-            stepNumber: currentTrace.length + 1,
-            stepStartedAtMs: performance.now(),
-          });
+          const diagnostics = debugSession.step(currentTrace.length + 1, performance.now());
           const changedSignalCount = diagnostics.changedRegisters.length
             + diagnostics.changedFlags.length
             + diagnostics.changedMemoryWords.length;
@@ -721,11 +738,10 @@ export function App() {
           currentSnapshots.push(createExecutionSnapshot(currentState, currentOutput, currentTrace.length, currentPerf));
           steps++;
 
-          const opcode = currentInstruction.opcode.toUpperCase();
           if (isCallStepOver) {
-            if (opcode === 'CALL') {
+            if (debugSession.instructionAt(ip)?.isCall) {
               callDepth++;
-            } else if (opcode === 'RET') {
+            } else if (debugSession.instructionAt(ip)?.isReturn) {
               callDepth = Math.max(0, callDepth - 1);
             }
           }
@@ -745,7 +761,7 @@ export function App() {
               break;
             }
           } else if (currentSourceLine !== null) {
-            const nextSourceLine = findSourceLineForInstruction(localSourceMapEntries, currentState.registers.IP);
+            const nextSourceLine = debugSession.sourceLineAt(currentState.registers.IP);
             if (nextSourceLine !== currentSourceLine) {
               break;
             }
@@ -779,7 +795,7 @@ export function App() {
         } else if (breakpoints.has(currentState.registers.IP)) {
           setDebugStatus(`Paused at breakpoint ${formatHex(currentState.registers.IP)} after step-over.`);
         } else if (!isCallStepOver && currentSourceLine !== null) {
-          const nextSourceLine = findSourceLineForInstruction(localSourceMapEntries, currentState.registers.IP);
+          const nextSourceLine = debugSession.sourceLineAt(currentState.registers.IP);
           setDebugStatus(
             nextSourceLine !== null
               ? `Step Over moved from source line ${currentSourceLine} to ${nextSourceLine} in ${steps} instruction(s).`
@@ -797,7 +813,7 @@ export function App() {
   }, [
     animatePipeline,
     breakpoints,
-    debugProgram,
+    debugSession,
     debugSnapshots,
     debugState.halted,
     getTriggeredWatchpoint,
@@ -815,7 +831,8 @@ export function App() {
   }, [seekTimelineToIndex, timelineCursor]);
 
   const debugReset = useCallback(() => {
-    const initialState = createInitialState(debugProgram?.initialMemory);
+    // The state the session started in, captured when the program was loaded.
+    const initialState = debugInitialState ?? createInitialState();
     const initialPerf = createInitialPerformanceMetrics();
     const initialSnapshot = createExecutionSnapshot(initialState, [], 0, initialPerf);
     setDebugState(initialState);
@@ -832,12 +849,13 @@ export function App() {
     setSnapshotCompareAId(null);
     setSnapshotCompareBId(null);
     setDebugStatus('CPU state reset.');
-  }, [debugProgram]);
+  }, [debugInitialState]);
 
   const debugRunToEnd = useCallback(() => {
-    if (!debugProgram || debugState.halted || isStepping || debugSnapshots.length === 0) {
+    if (!debugSession || debugState.halted || isStepping || debugSnapshots.length === 0) {
       return;
     }
+    const session = debugSession;
 
     const safeTimelineIndex = Math.max(0, Math.min(timelineCursor, debugSnapshots.length - 1));
     const activeSnapshot = restoreExecutionSnapshot(debugSnapshots[safeTimelineIndex]);
@@ -856,7 +874,7 @@ export function App() {
     while (!currentState.halted && steps < MAX_DEBUG_STEPS) {
       const ip = currentState.registers.IP;
 
-      if (ip < 0 || ip >= debugProgram.instructions.length) {
+      if (session.instructionAt(ip) === null) {
         currentState = { ...currentState, halted: true, error: 'IP out of bounds' };
         break;
       }
@@ -868,14 +886,7 @@ export function App() {
         break;
       }
 
-      const instruction = debugProgram.instructions[ip];
-      const diagnostics = executeStepWithDiagnostics({
-        state: currentState,
-        instruction,
-        labels: debugProgram.labels,
-        stepNumber: currentTrace.length + 1,
-        stepStartedAtMs: performance.now(),
-      });
+      const diagnostics = session.step(currentTrace.length + 1, performance.now());
       const changedSignalCount = diagnostics.changedRegisters.length
         + diagnostics.changedFlags.length
         + diagnostics.changedMemoryWords.length;
@@ -1033,15 +1044,9 @@ export function App() {
   }, [visibleTrace]);
 
   const selectedInstructionAddress = selectedInstructionIndex ?? debugState.registers.IP;
-  const selectedInstruction = useMemo(() => {
-    if (!debugProgram) {
-      return null;
-    }
-    if (selectedInstructionAddress < 0 || selectedInstructionAddress >= debugProgram.instructions.length) {
-      return null;
-    }
-    return debugProgram.instructions[selectedInstructionAddress];
-  }, [debugProgram, selectedInstructionAddress]);
+  const selectedInstruction = useMemo<InstructionView | null>(() => {
+    return debugSession?.instructionAt(selectedInstructionAddress) ?? null;
+  }, [debugSession, selectedInstructionAddress]);
 
   const selectedInstructionLastTrace = useMemo(() => {
     for (let i = visibleTrace.length - 1; i >= 0; i--) {
@@ -1098,13 +1103,6 @@ export function App() {
     return analyzePipelineHazards(visibleTrace);
   }, [visibleTrace]);
 
-  const sourceMapEntries = useMemo<SourceMapEntry[]>(() => {
-    if (!debugProgram) {
-      return [];
-    }
-    return buildSourceMapEntries(debugProgram);
-  }, [debugProgram]);
-
   const debugSourceCodeForMap = useMemo(() => {
     return debugOrigin === 'editor'
       ? sourceCode
@@ -1112,22 +1110,33 @@ export function App() {
   }, [asmCode, debugOrigin, sourceCode]);
 
   const activeSourceLine = useMemo<number | null>(() => {
-    return findSourceLineForInstruction(sourceMapEntries, selectedInstructionAddress);
-  }, [selectedInstructionAddress, sourceMapEntries]);
+    return debugSession?.sourceLineAt(selectedInstructionAddress) ?? null;
+  }, [debugSession, selectedInstructionAddress]);
+
+  const sourceMapEntries = useMemo<SourceMapEntry[]>(() => {
+    return debugSession ? [...debugSession.sourceMapEntries()] : [];
+  }, [debugSession]);
+
+  // Asked once per render rather than once per row: the listing maps over these,
+  // and an engine call per row per render is a debug view that gets slower the
+  // more of the program it shows you.
+  const debugInstructionAddresses = useMemo<number[]>(() => {
+    return debugSession ? [...debugSession.instructionAddresses()] : [];
+  }, [debugSession]);
 
   const runTestbench = useCallback((): AssertionResult[] => {
     return runTestbenchAssertions(testbenchScript, debugState, debugOutput);
   }, [debugOutput, debugState, testbenchScript]);
 
   const selectSourceLine = useCallback((line: number) => {
-    const instructionAddress = findInstructionForSourceLine(sourceMapEntries, line);
+    const instructionAddress = debugSession?.addressAtSourceLine(line) ?? null;
     if (instructionAddress === null) {
       return;
     }
     setSelectedInstructionIndex(instructionAddress);
     setDebugPanelTab('inspector');
     setDebugStatus(`Mapped source line ${line} to instruction ${formatHex(instructionAddress)}.`);
-  }, [sourceMapEntries]);
+  }, [debugSession]);
 
   const exportReplaySession = useCallback((): string => {
     const traceForReplay = traceLog.slice(-MAX_TRACE_FOR_REPLAY);
@@ -1152,14 +1161,17 @@ export function App() {
     try {
       const session = parseReplaySession(json);
       let restoredProgram: AssembledProgram | null = null;
+      let restoredSession: DebugSession | null = null;
       let restoredOrigin: DebugOrigin = 'asm-editor';
       let nextCompilationResult: CompilationResult | null = null;
 
       if (session.asmCode.trim()) {
-        const assembled = assemble(session.asmCode);
-        const hardErrors = assembled.errors.filter((error) => error.type === 'error');
-        if (hardErrors.length === 0) {
-          restoredProgram = assembled;
+        // Through the selected engine, like every other path into the debugger,
+        // so an imported replay lands on the engine the URL is asking for.
+        const built = createSession(engineFromQuery(window.location.search), session.asmCode);
+        if (built.session !== null && built.diagnostics.length === 0) {
+          restoredSession = built.session;
+          restoredProgram = assemble(session.asmCode);
         }
       }
 
@@ -1196,6 +1208,7 @@ export function App() {
         setCompilationResult(nextCompilationResult);
       }
       setDebugProgram(restoredProgram);
+      setDebugSession(restoredSession ?? legacySession(restoredProgram));
       setDebugOrigin(restoredOrigin);
       setActiveDemoId(session.asmCode ? resolveDemoIdFromSource(session.asmCode) : null);
       setTraceLog(restoredTrace);
@@ -1226,7 +1239,7 @@ export function App() {
   }, [asmCode, sourceCode]);
 
   const triggerSoftwareInterrupt = useCallback((vector: number) => {
-    if (!debugProgram || debugState.halted || isStepping || debugSnapshots.length === 0) {
+    if (!debugSession || debugState.halted || isStepping || debugSnapshots.length === 0) {
       return;
     }
 
@@ -1238,19 +1251,12 @@ export function App() {
     const currentOutput = activeSnapshot.output;
     const currentPerf = activeSnapshot.perf;
 
-    const instruction: Instruction = {
-      opcode: 'INT',
-      operands: [String(vector & 0xFF)],
-      address: currentState.registers.IP,
-      raw: `INT ${vector & 0xFF}`,
-    };
-    const diagnostics = executeStepWithDiagnostics({
-      state: currentState,
-      instruction,
-      labels: debugProgram.labels,
-      stepNumber: branchTrace.length + 1,
-      stepStartedAtMs: performance.now(),
-    });
+    debugSession.restore(currentState);
+    const diagnostics = debugSession.triggerSoftwareInterrupt(
+      vector,
+      branchTrace.length + 1,
+      performance.now(),
+    );
     const changedSignalCount = diagnostics.changedRegisters.length
       + diagnostics.changedFlags.length
       + diagnostics.changedMemoryWords.length;
@@ -1494,7 +1500,7 @@ export function App() {
     setCompilationResult(result);
     
     if (result.success && result.program) {
-      initializeDebugSession(result.program, 'editor', null);
+      initializeDebugSession(result.program, 'editor');
     }
   }, [initializeDebugSession, sourceCode, sourceLanguage]);
 
@@ -1913,14 +1919,21 @@ print "Hello!"`}</pre>
       setRunOutput(runAssemblySource(activeAsmCode));
     };
 
-    const handleAsmDebug = () => {
-      const program = assemble(activeAsmCode);
-      const hardErrors = program.errors.filter((error) => error.type === 'error');
-      if (hardErrors.length > 0) {
-        setRunOutput(`Error:\n${hardErrors.map((error) => `Line ${error.line}: ${error.message}`).join('\n')}`);
+    // Through the selected engine, so the diagnostics shown come from the engine
+    // that will run it. On the legacy that is the same assembler as before and
+    // the same messages; on the new engine it is the strict 8086 one, which is
+    // the point of selecting it.
+    const debugAsmSource = (source: string, demoId: string | null) => {
+      const { session, diagnostics } = createSession(engineFromQuery(window.location.search), source);
+      if (session === null || diagnostics.length > 0) {
+        setRunOutput(`Error:\n${diagnostics.map((diagnostic) => `Line ${diagnostic.line}: ${diagnostic.message}`).join('\n')}`);
         return;
       }
-      initializeDebugSession(program, 'asm-editor', resolveDemoIdFromSource(activeAsmCode));
+      initializeDebugSession(assemble(source), 'asm-editor', session, demoId);
+    };
+
+    const handleAsmDebug = () => {
+      debugAsmSource(activeAsmCode, resolveDemoIdFromSource(activeAsmCode));
     };
 
     const loadDemo = (source: string, demoId: string | null) => {
@@ -1937,13 +1950,7 @@ print "Hello!"`}</pre>
     const loadAndDebugDemo = (source: string, demoId: string | null) => {
       setAsmCode(source);
       setActiveDemoId(demoId);
-      const program = assemble(source);
-      const hardErrors = program.errors.filter((error) => error.type === 'error');
-      if (hardErrors.length > 0) {
-        setRunOutput(`Error:\n${hardErrors.map((error) => `Line ${error.line}: ${error.message}`).join('\n')}`);
-        return;
-      }
-      initializeDebugSession(program, 'asm-editor', demoId);
+      debugAsmSource(source, demoId);
     };
 
     return (
@@ -2081,12 +2088,10 @@ print "Hello!"`}</pre>
   }
 
   // Debug View
-  if (viewMode === 'debug' && debugProgram) {
+  if (viewMode === 'debug' && debugSession) {
     const currentIp = debugState.registers.IP;
-    const currentInstruction = debugProgram.instructions[currentIp];
-    const currentInstructionText = currentInstruction
-      ? `${currentInstruction.opcode} ${currentInstruction.operands.join(', ')}`.trim()
-      : 'End of program';
+    const currentInstruction = debugSession.instructionAt(currentIp);
+    const currentInstructionText = currentInstruction?.text ?? 'End of program';
     const timelineMax = Math.max(0, debugSnapshots.length - 1);
     const isRewound = timelineCursor < timelineMax;
     const traceForDisplay = visibleTrace;
@@ -2191,15 +2196,19 @@ print "Hello!"`}</pre>
               <CardHeader title="Instructions" icon={<Code2 className="w-4 h-4" />} />
               <CardContent noPadding className="overflow-auto h-full">
                 <div className="font-mono text-sm">
-                  {debugProgram.instructions.map((instr, i) => {
-                    const isCurrent = i === debugState.registers.IP;
-                    const hasBreakpoint = breakpoints.has(i);
-                    const isSelected = i === selectedInstructionAddress;
+                  {debugInstructionAddresses.map((address) => {
+                    const instr = debugSession.instructionAt(address);
+                    if (instr === null) {
+                      return null;
+                    }
+                    const isCurrent = address === debugState.registers.IP;
+                    const hasBreakpoint = breakpoints.has(address);
+                    const isSelected = address === selectedInstructionAddress;
                     return (
                       <motion.div
-                        key={i}
+                        key={address}
                         initial={false}
-                        onClick={() => setSelectedInstructionIndex(i)}
+                        onClick={() => setSelectedInstructionIndex(address)}
                         animate={isCurrent ? { backgroundColor: 'rgba(240, 180, 91, 0.12)' } : { backgroundColor: 'transparent' }}
                         className={cn(
                           'flex items-center px-3 py-1 border-l-2 transition-all cursor-pointer',
@@ -2214,7 +2223,7 @@ print "Hello!"`}</pre>
                       >
                         <button
                           type="button"
-                          onClick={() => toggleBreakpoint(i)}
+                          onClick={() => toggleBreakpoint(address)}
                           title={hasBreakpoint ? 'Remove breakpoint' : 'Add breakpoint'}
                           className={cn(
                             'w-5 text-center text-xs mr-2 transition-colors',
@@ -2223,7 +2232,7 @@ print "Hello!"`}</pre>
                         >
                           {hasBreakpoint ? '*' : '.'}
                         </button>
-                        <span className="w-8 text-gray-600 text-xs">{i.toString().padStart(3, '0')}</span>
+                        <span className="w-8 text-gray-600 text-xs">{address.toString().padStart(3, '0')}</span>
                         {isCurrent && <ChevronRight className="w-4 h-4 text-[#f0b45b] mr-2" />}
                         <span className={cn('text-[#e0b56a] font-semibold w-12', !isCurrent && 'ml-6')}>{instr.opcode}</span>
                         <span className="text-gray-300">{instr.operands.join(', ')}</span>
@@ -2552,7 +2561,7 @@ print "Hello!"`}</pre>
                   <CardContent>
                     <StackFramePanel
                       state={debugState}
-                      programLength={debugProgram.instructions.length}
+                      programLength={debugInstructionAddresses.length}
                     />
                   </CardContent>
                 </Card>

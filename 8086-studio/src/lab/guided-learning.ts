@@ -1,5 +1,4 @@
-import { Instruction } from '@/types/cpu';
-import { GuidedLearningContent, InstructionInspectorData } from '@/lab/types';
+import { GuidedLearningContent, InstructionInspectorData, InstructionParts } from '@/lab/types';
 
 interface TutorialCheckpoint {
   maxStep: number;
@@ -60,7 +59,7 @@ function resolveTutorialCheckpoint(activeDemoId: string | null, stepNumber: numb
 }
 
 export function buildGuidedLearningContent(
-  instruction: Instruction | null | undefined,
+  instruction: InstructionParts | null | undefined,
   inspector: InstructionInspectorData | null,
   stepNumber: number,
   activeDemoId: string | null

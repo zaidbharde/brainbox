@@ -268,6 +268,20 @@ export interface SourceMapEntry {
   instructionEnd: number;
 }
 
+/**
+ * The parts of an instruction the panels read.
+ *
+ * Not `Instruction` and not `InstructionView`: the readers below need the
+ * mnemonic and the operands and nothing else, and typing them on one of the two
+ * concrete shapes is what would force the debug view to keep holding a legacy
+ * program around just to satisfy a type. Whichever shape is handed over, these
+ * are the fields that get used.
+ */
+export interface InstructionParts {
+  readonly opcode: string;
+  readonly operands: readonly string[];
+}
+
 export interface ReplaySession {
   version: string;
   createdAtMs: number;

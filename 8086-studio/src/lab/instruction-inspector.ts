@@ -1,6 +1,5 @@
 import { parseImmediate, parseRegister } from '@/emulator/cpu';
-import { Instruction } from '@/types/cpu';
-import { InstructionInspectorData, TraceEntry } from '@/lab/types';
+import { InstructionInspectorData, InstructionParts, TraceEntry } from '@/lab/types';
 
 interface OpcodeDescriptor {
   category: string;
@@ -222,7 +221,7 @@ function getDescriptor(opcode: string): OpcodeDescriptor {
   };
 }
 
-function getVirtualEncoding(opcode: string, operands: string[]): { hex: string; binary: string } {
+function getVirtualEncoding(opcode: string, operands: readonly string[]): { hex: string; binary: string } {
   const opcodeByte = OPCODE_TO_BYTE[opcode] ?? 0x3F;
   const bytes = [opcodeByte, ...operands.map(encodeOperandVirtual)];
   return {
@@ -232,7 +231,7 @@ function getVirtualEncoding(opcode: string, operands: string[]): { hex: string; 
 }
 
 export function buildInstructionInspectorData(
-  instruction: Instruction | null | undefined,
+  instruction: InstructionParts | null | undefined,
   lastTraceEntry: TraceEntry | null
 ): InstructionInspectorData | null {
   if (!instruction) {
@@ -245,7 +244,7 @@ export function buildInstructionInspectorData(
 
   return {
     opcode,
-    operands: instruction.operands,
+    operands: [...instruction.operands],
     category: descriptor.category,
     summary: descriptor.summary,
     educationalNote: descriptor.educationalNote,
