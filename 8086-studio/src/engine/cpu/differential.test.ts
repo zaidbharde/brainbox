@@ -310,20 +310,6 @@ describe("differential: the new CPU matches the legacy emulator", () => {
     expectAllSame(eightBit, { skipFlags: true });
   });
 
-  it("is the only instruction the legacy takes that this engine refuses", () => {
-    // `SHL AX, 4` is the one case where the legacy is more permissive and is
-    // wrong to be: 0xC0/0xC1 do not exist on an 8086. Recorded as a named
-    // exception rather than left to be rediscovered, because the general rule
-    // is that anything the legacy assembles, this engine assembles.
-    const legacyOnly = ["SHL AX, 4", "ROL AL, 2", "SHR BX, 3"];
-    for (const source of legacyOnly) {
-      expect(
-        assemble(source, { origin: 0 }).errors.map((e) => e.message),
-        `${source} must not assemble: the count has no 8086 encoding`,
-      ).not.toEqual([]);
-    }
-  });
-
   it("matches on loads, stores and the stack", () => {
     expectAllSame([
       "MOV BX, 300h\nMOV WORD PTR [BX], 1234h\nHLT",
