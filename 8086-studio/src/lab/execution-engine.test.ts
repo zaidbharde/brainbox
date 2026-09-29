@@ -706,3 +706,131 @@ describe('view parts', () => {
     expect(view?.operands.length, 'MOVSB takes no operands').toBe(0);
   });
 });
+
+/**
+ * The debugger's interrupt control, on both engines.
+ *
+ * The test that matters is the comparison: raising a vector has to land the
+ * engine in the same place the `INT` instruction would, and land the trace in
+ * the same shape. A control that works on one engine and is quietly absent on
+ * the other is the bug this is here to prevent, and it cannot be caught by
+ * testing the two separately -- each would look right.
+ */
+describe('triggerSoftwareInterrupt', () => {
+  /**
+   * Run `setup`, then raise the vector where it left off.
+   *
+   * The setup has to be stepped: the whole point of the AH cases is that the
+   * service reads AH, and AH is still whatever the program started with if the
+   * instruction that sets it has not run.
+   */
+  function afterRaising(engine: EngineId, setup: string, vector: number) {
+    const subject = session(engine, `${setup}\nHLT`);
+    for (let i = 0; i < setup.split('\n').filter((line) => line.trim().length > 0).length; i++) {
+      subject.step(i + 1, 0);
+    }
+    const before = subject.state;
+    const diagnostics = subject.triggerSoftwareInterrupt(vector, 99, 0);
+    return { before, diagnostics, after: subject.state };
+  }
+
+  it('leaves the same state the INT instruction would, for a terminate vector', () => {
+    for (const vector of [0x20, 0x03]) {
+      for (const engine of ENGINES) {
+        const byInstruction = session(engine, `INT ${vector}\nHLT`);
+        const ran = byInstruction.step(1, 0);
+        const { after } = afterRaising(engine, 'MOV AX, 0', vector);
+        expect(after.halted, `${engine} vector ${vector.toString(16)}`).toBe(ran.nextState.halted);
+        expect(after.error, `${engine} vector ${vector.toString(16)}`).toBe(ran.nextState.error);
+      }
+    }
+  });
+
+  it('both engines terminate on 4ch through 21h, and on 20h', () => {
+    // The two cases both engines agree on, and the reason the comparison has a
+    // shared core at all. AH is not folded in here: 21h with AH=0 is a service
+    // the new engine does not have and the legacy does not treat as terminate,
+    // which is a divergence to record rather than a case to assert away.
+    for (const engine of ENGINES) {
+      const exit = afterRaising(engine, 'MOV AH, 0x4c', 0x21);
+      expect(exit.after.halted, `${engine} 21h/4ch`).toBe(true);
+      expect(exit.after.error, `${engine} 21h/4ch exits without a complaint`).toBeNull();
+      expect(afterRaising(engine, 'NOP', 0x20).after.halted, `${engine} 20h`).toBe(true);
+    }
+  });
+
+  it('the new engine reads AH: 02h prints one character where the legacy prints none', () => {
+    // One vector, two engines, one register, two different outcomes. This is the
+    // divergence in its smallest form, and it is a property of the engines'
+    // interrupt policies rather than of the adapter that raised it.
+    //
+    // 02h and not 09h: 09h prints a `$`-terminated string out of memory, so in a
+    // zeroed segment it runs to the end of the segment and emits 65536 NULs --
+    // which is right, and useless as a test of "did the service run".
+    const printed = afterRaising('v2', 'MOV DL, 0x41\nMOV AH, 0x02', 0x21);
+    expect(printed.after.halted, 'printing does not terminate').toBe(false);
+    expect(printed.diagnostics.output.length, 'and it printed the character').toBe(1);
+
+    // The legacy accepts 02h and steps over it without printing. It has the
+    // service in the sense that the vector does not trap; it has nothing behind
+    // it, so a program relying on 02h to print runs and produces no output.
+    const legacy = afterRaising('legacy', 'MOV DL, 0x41\nMOV AH, 0x02', 0x21);
+    expect(legacy.after.halted, 'accepted, so not a trap').toBe(false);
+    expect(legacy.diagnostics.output.length, 'but nothing came out').toBe(0);
+  });
+
+  it('an unsupported service stops the new engine and traps the legacy', () => {
+    // Where a debugger would differ most visibly: same button, same vector, one
+    // engine says what went wrong and stops, the other pushes a frame and runs
+    // on. The legacy's behaviour is the historical one and is left alone.
+    const stopped = afterRaising('v2', 'MOV AH, 0x99', 0x21);
+    expect(stopped.after.halted).toBe(true);
+    expect(stopped.after.error ?? '').toMatch(/unsupported INT 21h service 99h/);
+
+    const trapped = afterRaising('legacy', 'MOV AH, 0x99', 0x21);
+    expect(trapped.after.halted, 'the legacy does not stop').toBe(false);
+    expect(trapped.diagnostics.changedRegisters, 'it pushes a frame instead').toContain('SP');
+  });
+
+  it('a vector neither engine serves traps the legacy and stops the new one', () => {
+    const stopped = afterRaising('v2', 'NOP', 0x99);
+    expect(stopped.after.halted).toBe(true);
+    expect(stopped.after.error ?? '').toMatch(/unhandled interrupt 153/);
+
+    const trapped = afterRaising('legacy', 'NOP', 0x99);
+    expect(trapped.after.halted).toBe(false);
+    expect(trapped.diagnostics.changedRegisters).toContain('SP');
+  });
+
+  it('reports the interrupt it raised, at the position it was raised at', () => {
+    for (const engine of ENGINES) {
+      const { before, diagnostics } = afterRaising(engine, 'MOV AX, 0', 0x20);
+      expect(diagnostics.traceEntry.instructionText, engine).toBe('INT 32');
+      expect(diagnostics.traceEntry.instructionAddress, engine).toBe(before.registers.IP);
+    }
+  });
+
+  it('the new engine fetches nothing, so it times nothing and moves nothing', () => {
+    // Where the engines differ, and the difference is real rather than a bug in
+    // the adapter: this one raises the interrupt in place, so there is no
+    // instruction, no bytes read and no time. The legacy runs a synthesized
+    // `INT n` through its own step and reports a real cycle count for it. Both
+    // are honest about what they did; asserting they agree here would be
+    // asserting a divergence away.
+    const { before, diagnostics } = afterRaising('v2', 'MOV AX, 0x1234', 0x20);
+    expect(diagnostics.cycles).toBe(0);
+    expect(diagnostics.nextState.registers.IP, 'the position did not move').toBe(before.registers.IP);
+    expect(diagnostics.changedRegisters, 'a service that does not run touches nothing').toEqual([]);
+
+    const legacy = afterRaising('legacy', 'MOV AX, 0x1234', 0x20);
+    expect(legacy.diagnostics.cycles, 'the legacy times the instruction it ran').toBeGreaterThan(0);
+  });
+
+  it('the terminate vectors come out the same on both engines', () => {
+    const outcomes = ENGINES.map((engine) => {
+      const { after } = afterRaising(engine, 'NOP', 0x20);
+      return `${after.halted}:${after.error ?? ''}`;
+    });
+    expect(new Set(outcomes).size, `the engines disagreed: ${outcomes.join(' | ')}`).toBe(1);
+  });
+});

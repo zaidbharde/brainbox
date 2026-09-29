@@ -399,6 +399,22 @@ export class Cpu {
    * terminate paths halt. Anything else pushes a return frame and stops at a
    * synthetic handler address, which is enough for a debugger to see the trap.
    */
+  /**
+   * Raise an interrupt without an `INT` instruction in the program.
+   *
+   * The debugger's interrupt button asks for exactly what `INT n` does, from
+   * wherever the program happens to be stopped. It has to be the same code
+   * path: a second implementation would drift, and the interesting cases are
+   * the ones that diverge -- a vector the samples treat as terminate, a vector
+   * whose service reads AH, a vector with no service here at all.
+   *
+   * Nothing is fetched and no bytes change, so this is not a step: the trace
+   * entry for it says so.
+   */
+  triggerInterrupt(vector: number): void {
+    this.interrupt(vector);
+  }
+
   private interrupt(vector: number): void {
     const ah = this.readReg8(4);
     if (vector === 0x20 || vector === 0x03) {

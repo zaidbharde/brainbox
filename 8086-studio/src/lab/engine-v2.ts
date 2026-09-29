@@ -473,6 +473,58 @@ export class V2Session {
 
     this.cpu.step();
 
+    return this.describeTransition({
+      before,
+      ipBefore,
+      text: decoded.ok ? toLabSyntax(decoded.text) : decoded.error ?? '(undecodable)',
+      cycles: estimateCycles(decoded),
+      stepNumber,
+      stepStartedAtMs,
+    });
+  }
+
+  /**
+   * Raise the interrupt the way `INT n` would, at the current position.
+   *
+   * Nothing is fetched: the position does not move, no bytes change, and no
+   * instruction was read. The trace entry says `INT` and the position, and the
+   * cycle count is zero because zero instructions ran. What does change is
+   * whatever the interrupt service does -- terminate, read AH and print, or
+   * stop at a handler address -- which is the whole point of the control.
+   */
+  triggerSoftwareInterrupt(vector: number, stepNumber: number, stepStartedAtMs: number): StepDiagnostics {
+    const before = this.state;
+    const ipBefore = before.registers.IP;
+    this.outputLength = this.cpu.output.length;
+    this.cpu.triggerInterrupt(vector & 0xff);
+    return this.describeTransition({
+      before,
+      ipBefore,
+      text: `INT ${vector & 0xff}`,
+      cycles: 0,
+      stepNumber,
+      stepStartedAtMs,
+    });
+  }
+
+  /**
+   * The report both of the above produce: what the state looks like now,
+   * compared with what it looked like before.
+   *
+   * Shared because a step and a raised interrupt have to be described the same
+   * way. The lab's panels, its timeline and its watchpoints all read this
+   * shape, and the alternative -- the two paths each filling it in -- is how a
+   * control ends up reporting changes the timeline does not show.
+   */
+  private describeTransition(args: {
+    before: CPUState;
+    ipBefore: number;
+    text: string;
+    cycles: number;
+    stepNumber: number;
+    stepStartedAtMs: number;
+  }): StepDiagnostics {
+    const { before, ipBefore, text, cycles, stepNumber, stepStartedAtMs } = args;
     const after = this.state;
     this.refreshMemory();
     const output = this.cpu.output.slice(this.outputLength) as ProgramOutput[];
@@ -482,7 +534,6 @@ export class V2Session {
     const changedFlags = FLAG_NAMES.filter(
       (flag) => getFlags(before.registers.FLAGS)[flag] !== getFlags(after.registers.FLAGS)[flag],
     );
-    const text = decoded.ok ? toLabSyntax(decoded.text) : decoded.error ?? '(undecodable)';
 
     const traceEntry: TraceEntry = {
       step: stepNumber,
@@ -496,7 +547,7 @@ export class V2Session {
       memoryReads: reads,
       memoryWrites: writes,
       output,
-      cycles: estimateCycles(decoded),
+      cycles,
       timestampMs: stepStartedAtMs,
     };
 
@@ -508,7 +559,7 @@ export class V2Session {
       changedMemoryWords: writes,
       memoryReads: reads,
       memoryWrites: writes,
-      cycles: traceEntry.cycles,
+      cycles,
       traceEntry,
     };
   }

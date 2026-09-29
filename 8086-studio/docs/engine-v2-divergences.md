@@ -206,6 +206,41 @@ engines, which is what `test/compatibility.test.ts` now does for every sample.
 - `OF` preservation across multi-bit shifts
 - `INT 21h` AH=`01`, `07`, `08` and `0Ah` (the legacy has only `02`, `09` and `4C`)
 
+## Raising an interrupt by hand
+
+The debugger's interrupt control asks for `INT n` at wherever the program is
+stopped. It used to be the lab's own doing -- build an `INT` instruction that is
+not in the program and step it through the legacy -- so it only ever worked on
+the legacy. It is a session method now, and the interesting part is how far the
+two interrupt policies agree.
+
+They agree on the vectors that end a program. `INT 21h` with `AH`=`4Ch` terminates
+on both, and so does `INT 20h`, whatever `AH` says.
+
+They disagree past that, and the disagreement is a property of the engines rather
+than of the adapter that raised it:
+
+| Raised | Legacy | New engine |
+| --- | --- | --- |
+| `21h`, `AH`=`02h`/`09h` | accepted, steps over, prints nothing | prints the character (`02h`) or the `$`-terminated string (`09h`) |
+| `21h`, `AH` not served | pushes a return frame and runs on | halts, `unsupported INT 21h service ...` |
+| any other vector | pushes a return frame and runs on | halts, `unhandled interrupt ...` |
+| cycles reported | the count for the instruction it ran | `0` |
+
+The last row is the one to be careful about. The legacy runs a synthesized `INT n`
+through its own step, so it fetches, advances `IP` and has a cycle count. The new
+engine raises the interrupt in place: no fetch, no bytes read, `IP` unchanged, no
+time. Both are honest about what they did, so this is not a number that can be
+made to agree -- it is a difference in what the button does.
+
+A panel that shows stack movement after pressing the interrupt button on the legacy
+is therefore showing the legacy's frame push, not a fault in the new engine.
+
+`AH`=`09h` is worth calling out for a different reason: it prints a `$`-terminated
+string out of memory, so in a zeroed segment it runs to the end of the segment and
+emits 65536 NUL characters. That is correct, and it is why the tests use `02h` to
+check that a print service ran.
+
 ## Remaining work
 
 ### The debug view is still legacy-only

@@ -17,7 +17,7 @@ import { assemble as assembleLegacy } from '@/emulator/assembler';
 import { executeStepWithDiagnostics } from '@/lab/debugger';
 import { buildSourceMapEntries, findSourceLineForInstruction } from '@/lab/source-map';
 import { V2Session } from '@/lab/engine-v2';
-import type { AssembledProgram, CPUState } from '@/types/cpu';
+import type { AssembledProgram, CPUState, Instruction } from '@/types/cpu';
 import type { ProgramOutput } from '@/emulator/cpu';
 import type { InstructionView, SourceMapEntry, StepDiagnostics } from '@/lab/types';
 
@@ -39,6 +39,17 @@ export interface DebugSession {
   readonly diagnostics: readonly { line: number; message: string }[];
   /** Execute one instruction and report what changed. */
   step(stepNumber: number, stepStartedAtMs: number): StepDiagnostics;
+  /**
+   * Raise an interrupt at the current position, as `INT n` would.
+   *
+   * This is the debugger's interrupt control. It is a method rather than
+   * something the lab does by hand because doing it by hand means building an
+   * instruction the program does not contain and running it through whichever
+   * engine happens to be selected -- which is how the interrupt button came to
+   * work on one engine only. Nothing is fetched, so the trace entry says the
+   * position did not move.
+   */
+  triggerSoftwareInterrupt(vector: number, stepNumber: number, stepStartedAtMs: number): StepDiagnostics;
   /**
    * Put the engine back to a state the lab already holds.
    *
@@ -157,7 +168,7 @@ export function withEngineInQuery(search: string, engine: EngineId): string {
  * the same interface, and it is the default so nothing changes for anyone who
  * does not ask for the new one.
  */
-class LegacySession implements DebugSession {
+export class LegacySession implements DebugSession {
   readonly diagnostics: readonly { line: number; message: string }[];
 
   private readonly program: AssembledProgram;
@@ -197,6 +208,34 @@ class LegacySession implements DebugSession {
     // difference, so the state advances exactly once per press.
     const diagnostics = executeStepWithDiagnostics({
       state: this.current,
+      instruction,
+      labels: this.program.labels,
+      stepNumber,
+      stepStartedAtMs,
+    });
+    this.current = diagnostics.nextState;
+    return diagnostics;
+  }
+
+  /**
+   * Raise the interrupt the way `INT n` would, at the current position.
+   *
+   * Synthesized rather than fetched: the instruction is not in the program, so
+   * the state it leaves behind is the state's, not the program's. The trace
+   * entry names the interrupt that was raised, so a timeline showing one is not
+   * a timeline claiming the program contained it.
+   */
+  triggerSoftwareInterrupt(vector: number, stepNumber: number, stepStartedAtMs: number): StepDiagnostics {
+    const before = this.current;
+    const ipBefore = before.registers.IP;
+    const instruction: Instruction = {
+      opcode: 'INT',
+      operands: [String(vector & 0xff)],
+      address: ipBefore,
+      raw: `INT ${vector & 0xff}`,
+    };
+    const diagnostics = executeStepWithDiagnostics({
+      state: before,
       instruction,
       labels: this.program.labels,
       stepNumber,
@@ -313,4 +352,16 @@ function createLegacySession(source: string): CreateSessionResult {
 function createV2Session(source: string): CreateSessionResult {
   const { session, assembly } = V2Session.create(source);
   return { session, diagnostics: assembly.diagnostics };
+}
+
+/**
+ * A session over a program the lab assembled some other way.
+ *
+ * The frontend compilers produce a program without going through either
+ * assembler, so the debugger needs a session for one of those too. It gets the
+ * legacy, because that is the engine the frontend compilers target -- there is
+ * no source for the other one to assemble.
+ */
+export function legacySession(program: AssembledProgram): DebugSession {
+  return new LegacySession(program);
 }
