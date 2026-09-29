@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-for pid_file in /tmp/brainbox-backend.pid /tmp/brainbox-frontend.pid /tmp/brainbox-x86.pid; do
+for pid_file in /tmp/brainbox-backend.pid /tmp/brainbox-frontend.pid /tmp/brainbox-x86.pid /tmp/brainbox-linux.pid; do
   if [[ -f "$pid_file" ]]; then
     pid=$(cat "$pid_file" || true)
     if [[ -n "${pid:-}" ]]; then
@@ -14,5 +14,6 @@ done
 lsof -ti :4100 -sTCP:LISTEN | xargs kill -9 2>/dev/null || true
 lsof -ti :5174 -sTCP:LISTEN | xargs kill -9 2>/dev/null || true
 lsof -ti :5173 -sTCP:LISTEN | xargs kill -9 2>/dev/null || true
+lsof -ti :4300 -sTCP:LISTEN | xargs kill -9 2>/dev/null || true
 
-echo "BrainBox/x86 dev servers stopped."
+echo "BrainBox/x86/linux-terminal dev servers stopped."
