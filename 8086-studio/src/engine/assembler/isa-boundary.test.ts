@@ -45,7 +45,7 @@ const IS_8086 = [
   "JMP 0100h", "JMP WORD PTR [0100h]", "CALL 0100h", "RET", "RETF",
   "JE 2", "JNE 2", "JL 2", "JLE 2", "JG 2", "JGE 2", "JB 2", "JBE 2",
   "JO 2", "JNO 2", "JS 2", "JP 2", "JL 2",
-  "LOOP 2", "LOOPE 2", "LOOPNE 2", "JCXZ 2",
+  "LOOP 2", "LOOPE 2", "LOOPNE 2", "LOOPZ 2", "LOOPNZ 2", "JCXZ 2",
   // string
   "MOVSB", "MOVSW", "CMPSB", "STOSB", "STOSW", "LODSB", "LODSW", "SCASB",
   "SCASW", "REP MOVSB", "REPE SCASB", "REPNE SCASB",

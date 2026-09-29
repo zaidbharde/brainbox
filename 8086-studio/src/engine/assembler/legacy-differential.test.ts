@@ -65,7 +65,7 @@ const CORPUS: readonly string[] = [
   "JE 0100h", "JNE 0100h", "JL 0100h", "JLE 0100h", "JG 0100h", "JGE 0100h",
   "JB 0100h", "JBE 0100h", "JA 0100h", "JAE 0100h", "JO 0100h", "JNO 0100h",
   "JS 0100h", "JNS 0100h", "JP 0100h", "JNP 0100h",
-  "LOOP 0100h", "LOOPE 0100h", "LOOPNE 0100h", "JCXZ 0100h",
+  "LOOP 0100h", "LOOPE 0100h", "LOOPNE 0100h", "LOOPZ 0100h", "LOOPNZ 0100h", "JCXZ 0100h",
   // strings
   "MOVSB", "MOVSW", "CMPSB", "CMPSW", "STOSB", "STOSW",
   "LODSB", "LODSW", "SCASB", "SCASW", "XLAT",

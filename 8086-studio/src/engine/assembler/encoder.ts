@@ -14,6 +14,7 @@
 import {
   INSTRUCTION_TABLE,
   JCC_ALIASES,
+  LOOP_ALIASES,
   SHIFT_ALIASES,
   type InsnDef,
   type OperandType,
@@ -23,12 +24,13 @@ import type { Operand } from "./operands";
 import { DiagnosticBag } from "./diagnostics";
 
 /**
- * `JE` and `JZ` are the same instruction. The table only lists one name, so
- * aliases are folded before comparison and the caller can write either.
+ * `JE` and `JZ` are the same instruction, and so are `LOOPE`/`LOOPZ`. The table
+ * only lists one name per encoding, so aliases are folded before comparison and
+ * the caller can write either.
  */
 export function canonicalMnemonic(mnemonic: string): string {
   const upper = mnemonic.toUpperCase();
-  return JCC_ALIASES[upper] ?? SHIFT_ALIASES[upper] ?? upper;
+  return JCC_ALIASES[upper] ?? LOOP_ALIASES[upper] ?? SHIFT_ALIASES[upper] ?? upper;
 }
 
 export interface EncodeRequest {

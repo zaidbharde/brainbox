@@ -20,7 +20,7 @@ import { SegmentBuffer, type EntryPoint, type SegmentClass, type SegmentImage } 
 import { ExpressionParser, type SymbolResolver } from "./expression";
 import { parseOperands, type Operand } from "./operands";
 import { encode, selectEncoding, type EncodeRequest } from "./encoder";
-import { INSTRUCTION_TABLE, JCC_ALIASES, SHIFT_ALIASES, type InsnDef } from "../isa/table";
+import { INSTRUCTION_TABLE, JCC_ALIASES, LOOP_ALIASES, SHIFT_ALIASES, type InsnDef } from "../isa/table";
 
 export interface AssembleOptions {
   /**
@@ -120,9 +120,10 @@ const UNSUPPORTED_DIRECTIVES = new Set([
 ]);
 
 const MNEMONICS = new Set(INSTRUCTION_TABLE.map((def) => def.mnem));
-// Jcc and shift aliases are legal mnemonics even though the table only lists
-// one name per encoding.
+// Jcc, LOOP and shift aliases are legal mnemonics even though the table only
+// lists one name per encoding.
 for (const alias of Object.keys(JCC_ALIASES)) MNEMONICS.add(alias);
+for (const alias of Object.keys(LOOP_ALIASES)) MNEMONICS.add(alias);
 for (const alias of Object.keys(SHIFT_ALIASES)) MNEMONICS.add(alias);
 
 export function assemble(source: string, options: AssembleOptions = {}): AssemblyResult {

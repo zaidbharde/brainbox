@@ -184,6 +184,17 @@ export const SHIFT_ALIASES: Readonly<Record<string, string>> = {
   SAL: "SHL",
 };
 
+/**
+ * LOOPE/LOOPNE also go by LOOPZ/LOOPNZ. They are listed as notes on the table
+ * entries rather than as entries of their own, because two entries with the same
+ * opcode and operand shape make encoding ambiguous -- the table asserts against
+ * that, and rightly so.
+ */
+export const LOOP_ALIASES: Readonly<Record<string, string>> = {
+  LOOPZ: "LOOPE",
+  LOOPNZ: "LOOPNE",
+};
+
 /** Jcc aliases, short jumps (0x70-0x7F) and near jumps (0x80-0x8F). */
 const JCC: ReadonlyArray<{ digit: number; mnem: string; condition: string }> = [
   { digit: 0, mnem: "JO", condition: "OF=1" },
