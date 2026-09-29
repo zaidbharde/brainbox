@@ -920,7 +920,18 @@ export function runAndroidBoxProject(deviceId) {
         reject(error);
       });
 
-      installProcess.on('close', () => {
+      installProcess.on('close', (installCode) => {
+        const installFailed =
+          installCode !== 0 ||
+          /Failure\s*\[/i.test(installOutput) ||
+          /INSTALL_FAILED/i.test(installOutput) ||
+          !/Success/i.test(installOutput);
+
+        if (installFailed) {
+          reject(new Error(`install failed\n${installOutput}\n${logs}`));
+          return;
+        }
+
         const launcherActivity = readLaunchActivity(projectPath, packageName);
         const launchArgs = deviceId
           ? ['-s', deviceId, 'shell', 'am', 'start', '-n', launcherActivity]
@@ -940,7 +951,17 @@ export function runAndroidBoxProject(deviceId) {
           reject(error);
         });
 
-        launchProcess.on('close', () => {
+        launchProcess.on('close', (launchCode) => {
+          const launchFailed =
+            launchCode !== 0 ||
+            /Error:/i.test(launchOutput) ||
+            /does not exist/i.test(launchOutput);
+
+          if (launchFailed) {
+            reject(new Error(`launch failed\n${launchOutput}\n${installOutput}\n${logs}`));
+            return;
+          }
+
           resolve({
             ok: true,
             logs: logs + installOutput + launchOutput,
