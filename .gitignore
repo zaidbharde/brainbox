@@ -8,7 +8,11 @@ backend/node_modules/
 # Gradle / JVM build output (backend/android-box)
 backend/android-box/**/build/
 backend/android-box/**/.gradle/
+# Android SDK location, per machine. It was tracked before this, so the pattern
+# never applied to it: .gitignore does not affect files git already tracks. It is
+# untracked now, and this is what keeps it that way.
 local.properties
+**/local.properties
 
 # Editor / OS junk
 .DS_Store
