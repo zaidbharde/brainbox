@@ -335,6 +335,7 @@ export class V2Session {
       reads: [...new Set(effects.reads.map(parentRegisterOf))].sort(),
       writes: [...new Set(effects.writes.map(parentRegisterOf))].sort(),
       isCall: decoded.mnem === "CALL",
+      isReturn: decoded.mnem === "RET" || decoded.mnem === "RETF",
     };
   }
 
@@ -353,6 +354,34 @@ export class V2Session {
       bases.add(entry.instructionStart);
     }
     return [...bases].sort((a, b) => a - b);
+  }
+
+  /**
+   * Put the engine back to a state the lab already holds.
+   *
+   * The registers and the flags come across whole. Memory does not, and cannot:
+   * the lab's `CPUState` carries one flat segment image, because that is what it
+   * has always stored, and this engine has four segments. So the image is
+   * written back into the segment the session mirrors -- the code segment, which
+   * is the one the lab's memory view and its snapshots are of.
+   *
+   * The consequence is that rewinding past a step which wrote to the data or
+   * stack segment restores the code segment and the registers but not those
+   * writes. It is a limitation of the snapshot format rather than of this
+   * method, and it is stated here because a rewind that quietly half-restores is
+   * worse than one that refuses.
+   */
+  restore(state: CPUState): void {
+    const target = this.cpu.state;
+    for (const name of REGISTER_NAMES) {
+      (target as unknown as Record<string, number>)[name] = state.registers[name] & 0xffff;
+    }
+    target.halted = state.halted;
+    target.error = state.error;
+    const base = this.segmentBase();
+    this.cpu.memory.bytes.set(state.memory.subarray(0, SEGMENT_SIZE), base);
+    this.outputLength = this.cpu.output.length;
+    this.refreshMemory();
   }
 
   /** The state, in the shape the lab stores and every component already reads. */

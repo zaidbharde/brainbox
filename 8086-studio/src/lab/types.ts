@@ -73,6 +73,15 @@ export interface InstructionView {
    * call" is a property of the encoding.
    */
   readonly isCall: boolean;
+  /**
+   * True for `RET` and `RETF`.
+   *
+   * Step Over counts call depth with this. It is a separate flag from `isCall`
+   * rather than a second test on the same mnemonic because the far forms matter
+   * here: a far call pushes an extra word, and a step-over that counted one and
+   * not the other would run off the end of the subroutine it meant to land after.
+   */
+  readonly isReturn: boolean;
 }
 
 export interface StepDiagnostics {

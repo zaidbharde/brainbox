@@ -544,3 +544,99 @@ describe('instructionAddresses', () => {
     }
   });
 });
+
+/**
+ * Rewinding, because the lab's timeline can.
+ *
+ * A session that only moves forward is not enough: the lab keeps a list of
+ * snapshots and the user can seek back through it, and the Step after a rewind
+ * has to execute from the rewound state. A session that ignored `restore` would
+ * keep stepping from wherever the engine last got to and produce a trace that
+ * does not match the timeline it is displayed against -- which looks like a
+ * time-travel bug in the panel and is really a session that was never told.
+ */
+describe('restore', () => {
+  const PROGRAM = ['MOV AX, 0x1111', 'MOV BX, 0x2222', 'HLT'].join('\n');
+
+  it('the legacy returns to the registers it was given', () => {
+    const subject = session('legacy', PROGRAM);
+    const start = subject.state;
+    expect(subject.step(1, 0).nextState.registers.AX).toBe(0x1111);
+    expect(subject.step(2, 0).nextState.registers.BX).toBe(0x2222);
+    subject.restore(start);
+    expect(subject.state.registers.AX, 'AX came back').toBe(start.registers.AX);
+    expect(subject.state.registers.BX, 'BX came back too').not.toBe(0x2222);
+    // `stepNumber` labels the trace entry; it is not a step count, so the
+    // resumed run executes the two instructions in front of the one that matters.
+    subject.step(1, 0);
+    expect(subject.step(2, 0).nextState.registers.BX, 'and stepping resumes from there').toBe(0x2222);
+  });
+
+  it('the new engine returns to the registers it was given', () => {
+    const subject = session('v2', PROGRAM);
+    const start = subject.state;
+    expect(subject.step(1, 0).nextState.registers.AX).toBe(0x1111);
+    expect(subject.step(2, 0).nextState.registers.BX).toBe(0x2222);
+    subject.restore(start);
+    expect(subject.state.registers.AX, 'AX came back').toBe(start.registers.AX);
+    expect(subject.state.registers.BX, 'BX came back too').not.toBe(0x2222);
+    // `stepNumber` labels the trace entry; it is not a step count, so the
+    // resumed run executes the two instructions in front of the one that matters.
+    subject.step(1, 0);
+    expect(subject.step(2, 0).nextState.registers.BX, 'and stepping resumes from there').toBe(0x2222);
+  });
+
+  it('both engines re-step the same way after a rewind', () => {
+    // The point of the rewind is that the same button press lands in the same
+    // place twice. Run the program, rewind to the start, and compare the whole
+    // trace rather than one register.
+    for (const engine of ENGINES) {
+      const straight = session(engine, PROGRAM);
+      const first: number[] = [];
+      for (let i = 0; i < 3; i++) first.push(straight.step(i + 1, 0).nextState.registers.IP);
+
+      const rewound = session(engine, PROGRAM);
+      const start = rewound.state;
+      rewound.step(1, 0);
+      rewound.step(2, 0);
+      rewound.restore(start);
+      const second: number[] = [];
+      for (let i = 0; i < 3; i++) second.push(rewound.step(i + 1, 0).nextState.registers.IP);
+
+      expect(second, engine).toEqual(first);
+    }
+  });
+});
+
+describe('isReturn', () => {
+  function viewsFor(engine: EngineId, source: string) {
+    const subject = session(engine, source);
+    return subject.instructionAddresses()
+      .map((address) => subject.instructionAt(address))
+      .filter((view): view is NonNullable<typeof view> => view !== null);
+  }
+
+  it('both engines name RET, and nothing else', () => {
+    for (const engine of ENGINES) {
+      const views = viewsFor(engine, ['MOV AX, 1', 'HLT', 'RET'].join('\n'));
+      expect(views.filter((view) => view.isReturn).length, engine).toBe(1);
+      expect(views.find((view) => view.text.includes('MOV'))?.isReturn, engine).toBe(false);
+    }
+  });
+
+  it('the new engine names RETF as a return, because it can assemble one', () => {
+    // The legacy cannot: `RETF` is an 8086 instruction its assembler has never
+    // heard of, so there is nothing to ask it about. That is a gap in the legacy
+    // and not a reason to leave the far return uncounted here, where it can
+    // appear.
+    const views = viewsFor('v2', ['MOV AX, 1', 'HLT', 'RETF'].join('\n'));
+    expect(views.filter((view) => view.isReturn).length).toBe(1);
+    expect(views.find((view) => view.isReturn)?.text).toContain('RETF');
+  });
+
+  it('the legacy genuinely cannot assemble RETF, which is why it is asked alone', () => {
+    const { session: created, diagnostics } = createSession('legacy', 'RETF\n');
+    expect(created).toBeNull();
+    expect(diagnostics.map((d) => d.message).join('; ')).toMatch(/RETF/);
+  });
+});

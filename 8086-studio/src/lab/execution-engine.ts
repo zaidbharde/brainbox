@@ -39,6 +39,18 @@ export interface DebugSession {
   readonly diagnostics: readonly { line: number; message: string }[];
   /** Execute one instruction and report what changed. */
   step(stepNumber: number, stepStartedAtMs: number): StepDiagnostics;
+  /**
+   * Put the engine back to a state the lab already holds.
+   *
+   * The lab's timeline is a list of snapshots and it can seek backwards through
+   * them, so a session that only moves forward is not enough: the Step after a
+   * rewind has to execute from the rewound state, not from wherever the engine
+   * last got to. Called once at the start of a stepping run rather than before
+   * every step -- after that the engine and the lab's copy advance together, and
+   * reloading the whole image on each instruction would be the expensive way to
+   * express the same thing.
+   */
+  restore(state: CPUState): void;
   /** The source line the program is stopped on, or null if it cannot be said. */
   sourceLineAt(ip: number): number | null;
   /**
@@ -165,6 +177,10 @@ class LegacySession implements DebugSession {
     return this.current;
   }
 
+  restore(state: CPUState): void {
+    this.current = state;
+  }
+
   step(stepNumber: number, stepStartedAtMs: number): StepDiagnostics {
     // The legacy debugger steps by instruction index, because that is what the
     // legacy state records as IP. An index past the end of the parsed list means
@@ -216,6 +232,7 @@ class LegacySession implements DebugSession {
       reads: [],
       writes: [],
       isCall: opcode === 'CALL',
+      isReturn: opcode === 'RET' || opcode === 'RETF',
     };
   }
 
