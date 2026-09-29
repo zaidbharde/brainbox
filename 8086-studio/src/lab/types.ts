@@ -57,6 +57,16 @@ export interface InstructionView {
   readonly sourceLine: number | null;
   /** Intel-syntax text, e.g. `MOV AX, [BX+SI]`. */
   readonly text: string;
+  /**
+   * The mnemonic on its own, and the operands as separate strings.
+   *
+   * The lab's panels and its symbolic hints have always wanted the instruction
+   * broken up rather than as one line, and they are the same fields the legacy
+   * program carried. Splitting `text` would be the shortcut, but a string
+   * literal may contain a comma, and `text` is a rendering, not a parse.
+   */
+  readonly opcode: string;
+  readonly operands: string[];
   /** Bytes the instruction occupies, or null when the engine does not record it. */
   readonly byteLength: number | null;
   /** Flags this instruction reads or writes, e.g. `["ZF", "CF"]`. */

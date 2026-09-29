@@ -227,6 +227,8 @@ class LegacySession implements DebugSession {
       address,
       sourceLine: this.sourceLineAt(address),
       text: `${opcode} ${instruction.operands.join(', ')}`.trim(),
+      opcode,
+      operands: instruction.operands.map((operand) => operand.trim()),
       byteLength: null,
       flags: [],
       reads: [],

@@ -640,3 +640,69 @@ describe('isReturn', () => {
     expect(diagnostics.map((d) => d.message).join('; ')).toMatch(/RETF/);
   });
 });
+
+/**
+ * The parts of an instruction a panel wants, not just the whole line.
+ *
+ * The lab has always shown an instruction broken into a mnemonic and operands,
+ * and the symbolic hints read those fields to work out which hints apply. So
+ * the view has to carry them, and it has to be the pieces rather than a split
+ * of the line: `MOV AX, OFFSET 'a,b'` is one string with a comma in it, and
+ * splitting on the comma would hand the hint builder two operands where the
+ * program has one.
+ */
+describe('view parts', () => {
+  // Not an address of 0: the two engines do not load a program at the same
+  // place, and which segment a program starts in is not this test's business.
+  function viewAt(engine: EngineId, source: string, which = 0) {
+    const subject = session(engine, source);
+    return subject.instructionAt(subject.instructionAddresses()[which]);
+  }
+
+  it('both engines report the mnemonic and operands of MOV', () => {
+    for (const engine of ENGINES) {
+      const view = viewAt(engine, 'MOV AX, BX');
+      expect(view?.opcode, engine).toBe('MOV');
+      expect(view?.operands, engine).toEqual(['AX', 'BX']);
+      expect(view?.text, engine).toBe('MOV AX, BX');
+    }
+  });
+
+  it('the parts join back into the line', () => {
+    for (const engine of ENGINES) {
+      const view = viewAt(engine, 'MOV AX, [BX]');
+      expect(view, engine).not.toBeNull();
+      const joined = view!.operands.length > 0
+        ? `${view!.opcode} ${view!.operands.join(', ')}`
+        : view!.opcode;
+      expect(joined, engine).toBe(view!.text);
+    }
+  });
+
+  it('an operand with no operands is just the mnemonic', () => {
+    for (const engine of ENGINES) {
+      const view = viewAt(engine, 'HLT');
+      expect(view?.opcode, engine).toBe('HLT');
+      expect(view?.operands, engine).toEqual([]);
+      expect(view?.text, engine).toBe('HLT');
+    }
+  });
+
+  it('a string operand is reported as the value it resolved to', () => {
+    // The view describes the machine, not the source, so an operand written as a
+    // string comes back as the number it became. Pinned because the alternative
+    // -- handing the panels the source spelling -- would make a comma in a
+    // literal look like an operand boundary to anything that split the line.
+    const view = viewAt('v2', "MOV AX, OFFSET 'a,b'");
+    expect(view?.operands.length, 'still two operands').toBe(2);
+    expect(view?.operands[1], 'the value, not the literal').toMatch(/^[0-9A-F]+h$/);
+  });
+
+  it('a repeat prefix is not an operand of the instruction it repeats', () => {
+    // `REP MOVSB` is one instruction whose text starts with the prefix. If the
+    // prefix were counted as an operand the panels would show it twice.
+    const view = viewAt('v2', 'CLD\nREP MOVSB', 1);
+    expect(view?.text).toBe('REPE MOVSB');
+    expect(view?.operands.length, 'MOVSB takes no operands').toBe(0);
+  });
+});

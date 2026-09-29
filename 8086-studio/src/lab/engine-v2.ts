@@ -34,7 +34,7 @@
 import { Cpu, createInitialState as createEngineState } from '@/engine/cpu/cpu';
 import { Memory, SEGMENT_SIZE, physicalAddress } from '@/engine/memory';
 import { assemble } from '@/engine/assembler/assemble';
-import { decode, type DecodedInstruction } from '@/engine/cpu/decode';
+import { decode, formatOperand, type DecodedInstruction } from '@/engine/cpu/decode';
 import { parentRegisterOf, registerEffects } from '@/engine/cpu/effects';
 import { getFlags, type ProgramOutput } from '@/emulator/cpu';
 import type { CPUState, Registers } from '@/types/cpu';
@@ -327,6 +327,12 @@ export class V2Session {
       address: address & 0xffff,
       sourceLine: entry?.sourceLine ?? null,
       text: toLabSyntax(decoded.text),
+      opcode: decoded.mnem.toUpperCase(),
+      // Same formatter the text line came from, so the pieces and the line
+      // cannot drift apart.
+      operands: decoded.operands
+        .map((operand) => toLabSyntax(formatOperand(operand)))
+        .filter((operand) => operand.length > 0),
       byteLength: decoded.length,
       // Reported through the 16-bit register, because that is what the lab
       // stores: a write to AL is a write to half of AX and the panel has one row

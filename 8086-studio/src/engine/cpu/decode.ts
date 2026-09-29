@@ -508,7 +508,15 @@ function formatInstruction(mnem: string, operands: readonly DecodedOperand[]): s
   return parts.length === 0 ? mnem : `${mnem} ${parts.join(", ")}`;
 }
 
-function formatOperand(operand: DecodedOperand): string {
+/**
+ * One operand as text, in the same spelling the full instruction line uses.
+ *
+ * Exported so the debugger can offer an instruction's operands without taking
+ * the text apart again. Splitting `text` on commas would break on a string
+ * literal containing one, and the split is not the parse: the same formatting
+ * that produced the line is what has to produce the pieces.
+ */
+export function formatOperand(operand: DecodedOperand): string {
   switch (operand.kind) {
     case "none":
       return "";
