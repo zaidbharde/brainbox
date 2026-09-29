@@ -90,6 +90,7 @@ function findGradleCommand(projectPath = getProjectPath()) {
     readWrapperGradleVersion(projectPath),
     DEFAULT_GRADLE_VERSION,
   ].filter(Boolean);
+  const gradleBinary = process.platform === 'win32' ? 'gradle.bat' : 'gradle';
 
   for (const gradleVersion of candidateVersions) {
     const cachedGradleBin = path.join(
@@ -103,9 +104,16 @@ function findGradleCommand(projectPath = getProjectPath()) {
     if (fs.existsSync(cachedGradleBin)) {
       const firstLevel = fs.readdirSync(cachedGradleBin, { withFileTypes: true }).find((entry) => entry.isDirectory());
       if (firstLevel) {
-        const gradleBat = path.join(cachedGradleBin, firstLevel.name, `gradle-${gradleVersion}`, 'bin', 'gradle.bat');
-        if (fs.existsSync(gradleBat)) {
-          return { command: gradleBat, usesWrapper: false, version: gradleVersion };
+        const gradlePath = path.join(cachedGradleBin, firstLevel.name, `gradle-${gradleVersion}`, 'bin', gradleBinary);
+        if (fs.existsSync(gradlePath)) {
+          if (process.platform !== 'win32') {
+            try {
+              fs.chmodSync(gradlePath, 0o755);
+            } catch {
+              // Best effort for executable bit; spawn may still succeed depending on file mode.
+            }
+          }
+          return { command: gradlePath, usesWrapper: false, version: gradleVersion };
         }
       }
     }
@@ -115,27 +123,105 @@ function findGradleCommand(projectPath = getProjectPath()) {
 }
 
 function findAndroidSdk() {
-  if (process.env.ANDROID_SDK_ROOT) {
-    return process.env.ANDROID_SDK_ROOT;
+  const envCandidates = [process.env.ANDROID_SDK_ROOT, process.env.ANDROID_HOME]
+    .filter(Boolean);
+
+  for (const candidate of envCandidates) {
+    if (candidate && fs.existsSync(candidate)) {
+      return candidate;
+    }
   }
 
+  const homeDir = process.env.HOME || process.env.USERPROFILE || '';
   const localAppData = process.env.LOCALAPPDATA || '';
-  const candidate = path.join(localAppData, 'Android', 'Sdk');
-  return fs.existsSync(candidate) ? candidate : null;
+  const platformCandidates = process.platform === 'win32'
+    ? [
+        path.join(localAppData, 'Android', 'Sdk'),
+        path.join(homeDir, 'AppData', 'Local', 'Android', 'Sdk'),
+      ]
+    : process.platform === 'darwin'
+      ? [
+          path.join(homeDir, 'Library', 'Android', 'sdk'),
+          '/opt/homebrew/share/android-commandlinetools',
+          '/usr/local/share/android-commandlinetools',
+        ]
+      : [path.join(homeDir, 'Android', 'Sdk'), path.join(homeDir, 'Android', 'sdk')];
+
+  for (const candidate of platformCandidates) {
+    if (candidate && fs.existsSync(candidate)) {
+      return candidate;
+    }
+  }
+
+  return null;
+}
+
+function getBinaryName(baseName) {
+  return process.platform === 'win32' ? `${baseName}.exe` : baseName;
+}
+
+function findCommandInPath(commandName) {
+  const pathValue = process.env.PATH || '';
+  if (!pathValue) {
+    return null;
+  }
+
+  for (const dir of pathValue.split(path.delimiter)) {
+    if (!dir) {
+      continue;
+    }
+
+    const candidate = path.join(dir, commandName);
+    if (fs.existsSync(candidate)) {
+      return candidate;
+    }
+  }
+
+  return null;
 }
 
 function findJavaHome() {
-  if (process.env.JAVA_HOME && fs.existsSync(path.join(process.env.JAVA_HOME, 'bin', 'java.exe'))) {
+  const javaBinary = getBinaryName('java');
+
+  if (process.env.JAVA_HOME && fs.existsSync(path.join(process.env.JAVA_HOME, 'bin', javaBinary))) {
     return process.env.JAVA_HOME;
   }
 
-  const candidates = [
-    path.join('C:', 'Program Files', 'Android', 'Android Studio', 'jbr'),
-    path.join('C:', 'Program Files', 'Android', 'Android Studio', 'jre'),
-  ];
+  const homeDir = process.env.HOME || process.env.USERPROFILE || '';
+  const candidates = process.platform === 'win32'
+    ? [
+        path.join('C:', 'Program Files', 'Android', 'Android Studio', 'jbr'),
+        path.join('C:', 'Program Files', 'Android', 'Android Studio', 'jre'),
+      ]
+    : process.platform === 'darwin'
+      ? [
+          '/Applications/Android Studio.app/Contents/jbr/Contents/Home',
+          '/Applications/Android Studio.app/Contents/jre/Contents/Home',
+        ]
+      : ['/usr/lib/jvm/default-java', '/usr/lib/jvm/java-17-openjdk-amd64', '/usr/lib/jvm/java-11-openjdk-amd64'];
+
+  if (process.platform === 'darwin') {
+    const jvmsRoot = path.join(homeDir, 'Library', 'Java', 'JavaVirtualMachines');
+    if (fs.existsSync(jvmsRoot)) {
+      const homes = fs.readdirSync(jvmsRoot, { withFileTypes: true })
+        .filter((entry) => entry.isDirectory())
+        .map((entry) => path.join(jvmsRoot, entry.name, 'Contents', 'Home'));
+      candidates.push(...homes);
+    }
+  }
+
+  if (process.platform === 'linux') {
+    const jvmsRoot = '/usr/lib/jvm';
+    if (fs.existsSync(jvmsRoot)) {
+      const homes = fs.readdirSync(jvmsRoot, { withFileTypes: true })
+        .filter((entry) => entry.isDirectory())
+        .map((entry) => path.join(jvmsRoot, entry.name));
+      candidates.push(...homes);
+    }
+  }
 
   for (const candidate of candidates) {
-    if (fs.existsSync(path.join(candidate, 'bin', 'java.exe'))) {
+    if (fs.existsSync(path.join(candidate, 'bin', javaBinary))) {
       return candidate;
     }
   }
@@ -144,23 +230,39 @@ function findJavaHome() {
 }
 
 function getAdbPath() {
-  const sdk = findAndroidSdk();
-  if (!sdk) {
-    return null;
+  if (process.env.ADB_PATH && fs.existsSync(process.env.ADB_PATH)) {
+    return process.env.ADB_PATH;
   }
 
-  const adbPath = path.join(sdk, 'platform-tools', 'adb.exe');
-  return fs.existsSync(adbPath) ? adbPath : null;
+  const sdk = findAndroidSdk();
+  const adbBinary = getBinaryName('adb');
+
+  if (sdk) {
+    const adbPath = path.join(sdk, 'platform-tools', adbBinary);
+    if (fs.existsSync(adbPath)) {
+      return adbPath;
+    }
+  }
+
+  return findCommandInPath(adbBinary);
 }
 
 function getEmulatorPath() {
-  const sdk = findAndroidSdk();
-  if (!sdk) {
-    return null;
+  if (process.env.ANDROID_EMULATOR_PATH && fs.existsSync(process.env.ANDROID_EMULATOR_PATH)) {
+    return process.env.ANDROID_EMULATOR_PATH;
   }
 
-  const emulatorPath = path.join(sdk, 'emulator', 'emulator.exe');
-  return fs.existsSync(emulatorPath) ? emulatorPath : null;
+  const sdk = findAndroidSdk();
+  const emulatorBinary = getBinaryName('emulator');
+
+  if (sdk) {
+    const emulatorPath = path.join(sdk, 'emulator', emulatorBinary);
+    if (fs.existsSync(emulatorPath)) {
+      return emulatorPath;
+    }
+  }
+
+  return findCommandInPath(emulatorBinary);
 }
 
 function readApplicationId(projectPath) {
@@ -490,9 +592,17 @@ function createBuildRecord() {
 function getGradleCommand(projectPath) {
   const installedGradle = findGradleCommand(projectPath);
   if (installedGradle) {
+    if (process.platform === 'win32') {
+      return {
+        command: 'cmd.exe',
+        args: ['/c', installedGradle.command, 'assembleDebug', '--stacktrace'],
+        usesWrapper: false,
+      };
+    }
+
     return {
-      command: 'cmd.exe',
-      args: ['/c', installedGradle.command, 'assembleDebug', '--stacktrace'],
+      command: installedGradle.command,
+      args: ['assembleDebug', '--stacktrace'],
       usesWrapper: false,
     };
   }
