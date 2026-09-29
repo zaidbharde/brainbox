@@ -112,17 +112,31 @@ not. None of them are fixed in the legacy, deliberately: changing the legacy wou
 change what existing programs do, and the whole point of the switch is that the
 legacy stays exactly as it was.
 
-### `PUSH ES`, `POP ES`, `POP SS`, `PUSH DS` and `POP DS` are not 8086 instructions
+### `DS` and `ES` are not really segment registers in the legacy
 
-`0x06`, `0x07`, `0x17`, `0x1E` and `0x1F` are undefined on an 8086. They were added
-on the 80186.
+The seven segment `PUSH`/`POP` forms — `PUSH ES`/`POP ES` (`06`/`07`), `PUSH CS`
+(`0E`), `PUSH SS`/`POP SS` (`16`/`17`), `PUSH DS`/`POP DS` (`1E`/`1F`) — are 8086,
+not 80186, and both engines assemble and execute all seven. `0F` is deliberately
+absent: the legacy spends that opcode on a BrainBox extension, so `POP CS` is the
+one form in the family that neither engine emits.
 
-The legacy assembles and runs all five. The new assembler rejects them, with a
-uniform message such as `no encoding of PUSH accepts ES`.
+An earlier version of this document claimed the opposite, that these were 80186
+additions and that rejecting them was the new engine being correct. That was
+backwards, and rejecting them broke every program that used `PUSH DS`.
 
-**The new engine is right.** This is the one place where switching engines will
-break a program that works today, and it is a genuine incompatibility rather than a
-limitation: a program using `PUSH DS` is not an 8086 program.
+What the legacy actually does is the interesting part. Its `DS` and `ES` are
+initialised to `0x0100` and are not programmable segment registers: the legacy
+memory model is flat, with the data segment base folded into addressing, so
+`PUSH DS` reads back `0x100`. The new engine treats `DS` and `ES` as real
+segment registers, and in the compatibility harness all segments are zero, so
+`PUSH DS` reads back `0`.
+
+**The new engine is right**, but note that this one is a genuine behavioural
+difference rather than a case where both engines do the same thing correctly: a
+program that pushes `DS` and reads it back into `AX` sees `0x100` on the legacy
+and the real segment value here. No shipped sample does this, and
+`src/engine/assembler/legacy-differential.test.ts` covers the rest of the segment
+forms.
 
 ### Arithmetic and shift flags
 
