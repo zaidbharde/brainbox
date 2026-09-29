@@ -155,7 +155,6 @@ describe("ISA table coverage", () => {
     "CMPSB", "CMPSW", "XLAT",
     // io
     "IN", "OUT", "HLT", "NOP", "WAIT", "INT", "INT3", "IRET", "LES", "LDS",
-    "ENTER", "LEAVE",
     // all 16 conditional jumps
     "JO", "JNO", "JB", "JNB", "JZ", "JNZ", "JBE", "JA",
     "JS", "JNS", "JP", "JNP", "JL", "JGE", "JLE", "JG",

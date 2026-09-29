@@ -943,11 +943,6 @@ export class Cpu {
         return;
       }
 
-      case "ENTER":
-      case "LEAVE":
-        this.stackFrame(mnem, ops);
-        return;
-
       case "INT":
         this.interrupt(ops[0]?.kind === "imm" ? ops[0].value : 0);
         return;
@@ -1095,10 +1090,6 @@ export class Cpu {
       case "LODSW":
       case "SCASB":
       case "SCASW":
-      case "INSB":
-      case "INSW":
-      case "OUTSB":
-      case "OUTSW":
         this.string(instruction);
         return;
 
@@ -1397,26 +1388,6 @@ export class Cpu {
     this.state.FLAGS = flags;
   }
 
-  private stackFrame(mnem: string, ops: readonly DecodedOperand[]): void {
-    if (mnem === "LEAVE") {
-      this.state.SP = this.state.BP;
-      this.state.BP = this.pop();
-      return;
-    }
-    const alloc = ops[0]?.kind === "imm" ? ops[0].value : 0;
-    const level = ops[1]?.kind === "imm" ? ops[1].value : 0;
-    // ENTER is only implemented at nesting level 0, which is all an 8086
-    // teaching program uses; the deeper forms need the display pseudo-register.
-    if (level > 0) {
-      this.state.halted = true;
-      this.state.error = "ENTER with nesting is not supported";
-      return;
-    }
-    this.push(this.state.BP);
-    this.state.BP = this.state.SP;
-    this.state.SP = wrap16(this.state.SP - alloc);
-  }
-
   /**
    * One pass of a string instruction. Repetition is handled by looping here
    * rather than by a REP prefix in the decoder, because a REP'd instruction has
@@ -1516,25 +1487,6 @@ export class Cpu {
         const a = width === 8 ? this.readReg8(0) : this.getAccumulator();
         const b = width === 8 ? this.read8(es, this.state.DI) : this.read16(es, this.state.DI);
         this.state.FLAGS = subFlags(a, b, 0, width, this.state.FLAGS).flags;
-        this.state.DI = wrap16(this.state.DI + delta);
-        return true;
-      }
-      // The port I/O string instructions. They share the DI bookkeeping with the
-      // memory ones and the REP form with them, which is why they are handled
-      // here rather than beside IN and OUT: `REP INSW` is the way to pull a
-      // block off a port, and it has to advance DI by two per pass.
-      case "INSB":
-      case "INSW": {
-        const value = width === 8 ? this.portIn(this.state.DX, 8) : this.portIn(this.state.DX, 16);
-        if (width === 8) this.write8(es, this.state.DI, value);
-        else this.write16(es, this.state.DI, value);
-        this.state.DI = wrap16(this.state.DI + delta);
-        return true;
-      }
-      case "OUTSB":
-      case "OUTSW": {
-        const value = width === 8 ? this.readReg8(0) : this.getAccumulator();
-        this.portOut(this.state.DX, width, value);
         this.state.DI = wrap16(this.state.DI + delta);
         return true;
       }

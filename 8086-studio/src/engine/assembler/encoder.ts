@@ -302,15 +302,54 @@ export function selectEncoding(request: EncodeRequest): InsnDef | undefined {
 export function encode(request: EncodeRequest, diagnostics: DiagnosticBag): EncodedInstruction | undefined {
   const def = selectEncoding(request);
   if (!def) {
+    // "no encoding of SHL accepts AL, 2" reads like a missing feature. When the
+    // real reason is that the form postdates the 8086, say so, and say what to
+    // write instead: the boundary is much easier to argue with than a shrug.
+    const boundary = notOn8086(request);
     diagnostics.error(
       request.line,
       request.column,
-      `no encoding of ${request.mnemonic.toUpperCase()} accepts ` +
-        `${request.operands.map(describeOperand).join(", ")}`,
+      boundary ??
+        `no encoding of ${request.mnemonic.toUpperCase()} accepts ` +
+          `${request.operands.map(describeOperand).join(", ")}`,
     );
     return undefined;
   }
   return { bytes: emit(def, request, diagnostics), def };
+}
+
+const SHIFT_MNEMONICS = new Set(["SHL", "SAL", "SHR", "SAR", "ROL", "ROR", "RCL", "RCR"]);
+
+// Mnemonics that are 80186 are rejected earlier, in `assemble.ts`, because
+// they fail at the mnemonic before any operand is parsed. What is left here are
+// the rejections that depend on the operands: a count that is neither 1 nor CL,
+// an immediate to PUSH, an immediate to RETF, and the three-operand IMUL.
+
+/** True when the operand is a count, i.e. a number that is not 1. */
+function isCountOtherThanOne(operand: Operand | undefined): boolean {
+  if (operand === undefined) return false;
+  if (operand.kind !== "imm" && operand.kind !== "target") return false;
+  return operand.value !== 1;
+}
+
+function notOn8086(request: EncodeRequest): string | undefined {
+  const mnem = canonicalMnemonic(request.mnemonic);
+  if (SHIFT_MNEMONICS.has(mnem) && isCountOtherThanOne(request.operands[1])) {
+    return (
+      `${mnem} with a count other than 1 is an 80186 instruction (opcode C0/C1). ` +
+      `The 8086 can only shift by 1 or by CL, so write MOV CL, n first.`
+    );
+  }
+  if (mnem === "PUSH" && isCountOtherThanOne(request.operands[0])) {
+    return "PUSH with an immediate is an 80186 instruction; on an 8086 the operand must be a register or memory";
+  }
+  if (mnem === "RETF" && request.operands.length > 0) {
+    return "RETF with an immediate is an 80186 instruction; plain RETF is the 8086 form";
+  }
+  if (mnem === "IMUL" && request.operands.length > 2) {
+    return "the three-operand IMUL is an 80186 instruction; on an 8086 IMUL takes one operand";
+  }
+  return undefined;
 }
 
 function describeOperand(operand: Operand): string {

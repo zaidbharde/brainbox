@@ -466,6 +466,17 @@ function runStatement(ctx: PassContext, statement: Statement): void {
   const head = rest[0].text.toUpperCase();
   const headToken = rest[0];
 
+  // Ahead of everything else, including the directive and operand-kind checks:
+  // `ENTER 8, 0` and `BOUND AX, 0100h` both divert before reaching the
+  // "unknown instruction" fallback, and the person who typed them deserves to
+  // be told the instruction is out of period rather than that `8` is not a
+  // mnemonic.
+  const not8086 = NOT_8086_MNEMONICS.get(head);
+  if (not8086 !== undefined) {
+    ctx.diagnostics.error(headToken.line, headToken.column, not8086);
+    return;
+  }
+
   if (headToken.kind === "ident" && isDirectiveWord(head)) {
     runDirective(ctx, statement, head, rest.slice(1), label !== undefined, leadingName);
     return;
@@ -512,6 +523,34 @@ function runStatement(ctx: PassContext, statement: Statement): void {
 
   ctx.diagnostics.error(headToken.line, headToken.column, `unknown instruction ${head}`);
 }
+
+/**
+ * Mnemonics that exist, but only from the 80186 on. Without this they are
+ * indistinguishable from a typo -- `PUSHA` would read as "unknown instruction
+ * PUSHA" whether or not you meant it -- and someone porting 80286 code would have
+ * no way to tell which of the two problems they had.
+ *
+ * The check is here rather than in the encoder because these are rejected at the
+ * mnemonic, before any operand is parsed: `ENTER 8, 0` fails on the `8` if the
+ * parser has never heard of `ENTER`. The encoder handles the cases that depend
+ * on the operands, such as a shift count that is neither 1 nor CL.
+ */
+const NOT_8086_MNEMONICS: ReadonlyMap<string, string> = new Map([
+  ["PUSHA", "PUSHA is an 80186 instruction; there is no 8086 equivalent"],
+  ["POPA", "POPA is an 80186 instruction; there is no 8086 equivalent"],
+  ["PUSHAW", "PUSHAW is an 80186 instruction; there is no 8086 equivalent"],
+  ["POPAW", "POPAW is an 80186 instruction; there is no 8086 equivalent"],
+  ["ENTER", "ENTER is an 80186 instruction; there is no 8086 equivalent"],
+  ["LEAVE", "LEAVE is an 80186 instruction; there is no 8086 equivalent"],
+  ["BOUND", "BOUND is an 80186 instruction; there is no 8086 equivalent"],
+  ["ARPL", "ARPL is an 80186 instruction; there is no 8086 equivalent"],
+  ["INSB", "INSB is an 80186 instruction; a 8086 has no string port I/O"],
+  ["INSW", "INSW is an 80186 instruction; a 8086 has no string port I/O"],
+  ["OUTSB", "OUTSB is an 80186 instruction; a 8086 has no string port I/O"],
+  ["OUTSW", "OUTSW is an 80186 instruction; a 8086 has no string port I/O"],
+  ["INS", "INS is an 80186 instruction; a 8086 has no string port I/O"],
+  ["OUTS", "OUTS is an 80186 instruction; a 8086 has no string port I/O"],
+]);
 
 function defineLabel(ctx: PassContext, name: string, line: number, column: number): void {
   const existing = ctx.symbols.lookup(name);
@@ -832,11 +871,9 @@ function writeScalar(ctx: PassContext, elementSize: 8 | 16 | 32, value: number):
 const REPEATABLE = new Set([
   "MOVSB", "MOVSW", "CMPSB", "CMPSW", "STOSB", "STOSW",
   "LODSB", "LODSW", "SCASB", "SCASW",
-  // The port I/O string instructions repeat too, and are the only way to move a
-  // block on or off a port: `REP INSW` reads CX words into ES:DI. Leaving them
-  // out makes the diagnostic above wrong -- they are string instructions, and the
-  // CPU's string path already handles all four.
-  "INSB", "INSW", "OUTSB", "OUTSW",
+  // The 80186 port I/O string instructions (INSB/INSW/OUTSB/OUTSW) used to be
+  // here, so that `REP INSW` would be accepted. A 8086 has no string port I/O
+  // at all, so `REP INSW` must now be refused like any other non-8086 form.
 ]);
 
 /** Mnemonic to the byte that encodes it. */

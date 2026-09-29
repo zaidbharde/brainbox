@@ -282,22 +282,46 @@ describe("differential: the new CPU matches the legacy emulator", () => {
     // Sixteen-bit shifts are compared on everything. The eight-bit ones keep
     // their results only, because the legacy's eight-bit SF is not the 8086's
     // (it clears SF for every eight-bit shift, whatever the result's top bit).
+    //
+    // Every count goes through CL, including the constant ones. The legacy
+    // accepts `SHL AX, 4` and so did this engine once, via the 80186 `C1` group
+    // -- but a count of 4 has no 8086 encoding, so the two engines can only be
+    // compared by writing the 8086 version. `expectAllSame` assembles on both,
+    // so an immediate here would now fail the comparison rather than paper over
+    // it. The refusal itself is checked in `isa-boundary.test.ts`.
     const sixteenBit: string[] = [];
     const eightBit: string[] = [];
     for (const op of ["SHL", "SHR", "SAL", "SAR"]) {
-      for (const count of ["1", "4", "9", "CL"]) {
-        sixteenBit.push(`MOV AX, 1234h\nMOV CL, 4\n${op} AX, ${count}\nHLT`);
-        eightBit.push(`MOV AL, 34h\nMOV CL, 2\n${op} AL, ${count}\nHLT`);
+      for (const count of [1, 4, 9]) {
+        sixteenBit.push(`MOV AX, 1234h\nMOV CL, ${count}\n${op} AX, CL\nHLT`);
+        eightBit.push(`MOV AL, 34h\nMOV CL, ${count}\n${op} AL, CL\nHLT`);
       }
+      // `SHL AX, 1` is the implied-count form and is spelled without CL.
+      sixteenBit.push(`MOV AX, 1234h\n${op} AX, 1\nHLT`);
+      eightBit.push(`MOV AL, 34h\n${op} AL, 1\nHLT`);
     }
     // A count of zero leaves the register alone and, on the 8086, the flags
     // with it.
-    sixteenBit.push("MOV AX, 1234h\nSHL AX, 0\nHLT");
-    sixteenBit.push("MOV AX, 0FFFFh\nSAR AX, 0\nHLT");
+    sixteenBit.push("MOV AX, 1234h\nMOV CL, 0\nSHL AX, CL\nHLT");
+    sixteenBit.push("MOV AX, 0FFFFh\nMOV CL, 0\nSAR AX, CL\nHLT");
     // More than one shift's worth is masked down to five bits.
-    sixteenBit.push("MOV AX, 1234h\nSHL AX, 33\nHLT");
+    sixteenBit.push("MOV AX, 1234h\nMOV CL, 33\nSHL AX, CL\nHLT");
     expectAllSame(sixteenBit);
     expectAllSame(eightBit, { skipFlags: true });
+  });
+
+  it("is the only instruction the legacy takes that this engine refuses", () => {
+    // `SHL AX, 4` is the one case where the legacy is more permissive and is
+    // wrong to be: 0xC0/0xC1 do not exist on an 8086. Recorded as a named
+    // exception rather than left to be rediscovered, because the general rule
+    // is that anything the legacy assembles, this engine assembles.
+    const legacyOnly = ["SHL AX, 4", "ROL AL, 2", "SHR BX, 3"];
+    for (const source of legacyOnly) {
+      expect(
+        assemble(source, { origin: 0 }).errors.map((e) => e.message),
+        `${source} must not assemble: the count has no 8086 encoding`,
+      ).not.toEqual([]);
+    }
   });
 
   it("matches on loads, stores and the stack", () => {

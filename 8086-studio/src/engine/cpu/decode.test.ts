@@ -39,6 +39,8 @@ const NOT_8086 = new Set<string>([
   "JNB NEAR .L+200",
   "JZ NEAR .L+200",
   "JGE NEAR .L+200",
+  "LEAVE",
+  "ENTER 8,0",
 ]);
 
 describe("decode", () => {

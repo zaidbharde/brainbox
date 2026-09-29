@@ -124,8 +124,11 @@ export interface InsnDef {
     signExtend?: boolean;
   };
   /**
-   * A second immediate, for the one instruction that has two: ENTER takes a
-   * 16-bit frame size followed by an 8-byte nesting level.
+   * A second immediate. No 8086 instruction has one -- the only entry that ever
+   * did was `ENTER` (0xC8), which takes a frame size and a nesting level, and
+   * ENTER is 80186. The field is kept because the decoder and encoder both read
+   * it, and a table that cannot express a second immediate would push that
+   * decision into three files instead of one.
    */
   readonly imm2?: { slot: OperandSlot; size: 8 | 16; signExtend?: boolean };
   /** Relative branch target. */
@@ -331,16 +334,20 @@ function buildTable(): InsnDef[] {
     });
   }
 
-  // -- 0x6C-0x6F: string port I/O ----------------------------------------
-  // The only 8086 forms: a single byte or word, always from AL/AX to DX, and
-  // always via ES:[DI]. The 0x6C-0x6F range is otherwise 80186+ (PUSHA,
-  // PUSH imm) and is deliberately not modelled.
-  table.push(
-    { mnem: "INSB", ops: ["none"], bytes: [0x6c], flags: ["DF"], note: "AL <- port[DX], ES:[DI] += 1" },
-    { mnem: "INSW", ops: ["none"], bytes: [0x6d], flags: ["DF"], note: "AX <- port[DX], ES:[DI] += 2" },
-    { mnem: "OUTSB", ops: ["none"], bytes: [0x6e], flags: ["DF"], note: "port[DX] <- AL, ES:[DI] += 1" },
-    { mnem: "OUTSW", ops: ["none"], bytes: [0x6f], flags: ["DF"], note: "port[DX] <- AX, ES:[DI] += 2" },
-  );
+  // -- 0x60-0x6F: deliberately absent ------------------------------------
+  // The whole block is 80186: PUSHA/POPA (60/61), BOUND (62), ARPL (63),
+  // PUSH imm16 (68), IMUL r,rm,imm16 (69), PUSH imm8 (6A), IMUL r,rm,imm8
+  // (6B), and the string port I/O INSB/INSW/OUTSB/OUTSW (6C-6F).
+  //
+  // These four string I/O entries were here once, under a comment that said the
+  // range "is otherwise 80186+ and is deliberately not modelled" -- in the same
+  // breath as modelling it. A 8086 has no string port instructions at all: port
+  // I/O is only `IN` and `OUT`, a byte or word between AL/AX and DX. So
+  // `REP INSW` is not something this engine should be able to assemble.
+  //
+  // The comment is the lesson as much as the removal: a boundary that is only
+  // described in prose gets crossed. `isa-boundary.test.ts` now asserts the
+  // opcodes are undecodable.
 
 
   // -- 0x50-0x5F: PUSH/POP r16 -------------------------------------------
@@ -525,17 +532,9 @@ function buildTable(): InsnDef[] {
     { mnem: "LDS", ops: ["r16", "rm16"], bytes: [0xc5], modrm: { reg: 0, rm: 1, mod3Forbidden: true }, flags: [] },
     { mnem: "MOV", ops: ["rm8", "imm8"], bytes: [0xc6], modrm: { digit: 0, rm: 0 }, imm: { slot: 1, size: 8 }, flags: [] },
     { mnem: "MOV", ops: ["rm16", "imm16"], bytes: [0xc7], modrm: { digit: 0, rm: 0 }, imm: { slot: 1, size: 16 }, flags: [] },
-    {
-      mnem: "ENTER",
-      ops: ["imm16", "imm8"],
-      bytes: [0xc8],
-      imm: { slot: 0, size: 16 },
-      imm2: { slot: 1, size: 8 },
-      flags: [],
-      note: "level must be 0 on an 8086",
-    },
-    { mnem: "LEAVE", ops: ["none"], bytes: [0xc9], flags: [] },
-    { mnem: "RETF", ops: ["imm16"], bytes: [0xca], imm: { slot: 0, size: 16 }, flags: [] },
+    // 0xC8 ENTER, 0xC9 LEAVE and 0xCA RETF imm16 are all 80186. They are not
+    // in the table, and the `imm2` field that existed only for ENTER goes with
+    // them. Plain `RETF` is 0xCB and *is* 8086, which is why it is still here.
     { mnem: "RETF", ops: ["none"], bytes: [0xcb], flags: [] },
     { mnem: "INT3", ops: ["none"], bytes: [0xcc], flags: [], note: "INT 3" },
     { mnem: "INT", ops: ["imm8"], bytes: [0xcd], imm: { slot: 0, size: 8 }, flags: [] },
@@ -543,29 +542,19 @@ function buildTable(): InsnDef[] {
     { mnem: "IRET", ops: ["none"], bytes: [0xcf], flags: ["OF", "SF", "ZF", "AF", "PF", "CF", "DF", "IF", "TF"] },
   );
 
-  // -- 0xC0-0xC1: shift/rotate by an immediate ---------------------------
-  // Without these `shl ax,4` has no encoding at all, which is not a corner
-  // case: it is the form people write when the count is a constant.
-  for (const op of SHIFT) {
-    table.push({
-      mnem: op.mnem,
-      ops: ["rm8", "imm8"],
-      bytes: [0xc0],
-      modrm: { digit: op.digit, rm: 0 },
-      imm: { slot: 1, size: 8 },
-      flags: SHIFT_FLAGS,
-      ...(op.note ? { note: op.note } : {}),
-    });
-    table.push({
-      mnem: op.mnem,
-      ops: ["rm16", "imm8"],
-      bytes: [0xc1],
-      modrm: { digit: op.digit, rm: 0 },
-      imm: { slot: 1, size: 8 },
-      flags: SHIFT_FLAGS,
-      ...(op.note ? { note: op.note } : {}),
-    });
-  }
+  // -- 0xC0/0xC1: deliberately absent -------------------------------------
+  // These are the 80186 "shift/rotate by an 8-bit immediate" opcodes. They were
+  // in this table once, with the reasoning that `shl ax,4` is what people write
+  // and it needs an encoding. That reasoning is the bug: the bytes came out as
+  // `C1 E8 04`, which an 8086 treats as a reserved opcode. The program ran here
+  // and would not run on the machine it was written for, and nothing failed.
+  //
+  // On an 8086 the only shift counts are the implied 1 (`D0`/`D1`) and CL
+  // (`D2`/`D3`). `shl ax,4` has to be written as `mov cl,4` / `shl ax,cl`, which
+  // is what it was always assembled to on real hardware.
+  //
+  // `isa-boundary.test.ts` pins both halves of this: the immediate form must be
+  // refused, and `shl ax,1` and `shl ax,cl` must keep working.
 
   // -- 0xD0-0xD3: shift/rotate group -------------------------------------
   for (const op of SHIFT) {

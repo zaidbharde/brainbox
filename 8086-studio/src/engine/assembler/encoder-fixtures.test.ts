@@ -16,6 +16,10 @@
  * segment PUSH/POP forms -- and gas's own bytes for them are exactly those
  * single-byte opcodes, so they are now assembled and compared like any other
  * fixture. Excluding them was the bug, not the fixture.
+ *
+ * The remaining exclusions are the ones that are genuinely out of period:
+ * `LEAVE` (0xC9) and `ENTER 8,0` (0xC8) are 80186, so gas emits them happily and
+ * an 8086 cannot execute them.
  */
 
 import { describe, expect, it } from "vitest";
@@ -25,6 +29,9 @@ import { assemble } from "./assemble";
 type FixtureMap = Record<string, number[]>;
 
 const entries = Object.entries(fixtures as FixtureMap);
+
+/** Fixtures that are 80186, not 8086. See the note at the top of the file. */
+const NOT_8086 = new Set<string>(["LEAVE", "ENTER 8,0"]);
 
 /**
  * `JMP NEAR .L+200` -> `JMP 200`, `JO SHORT .L` -> `JO 2`.
@@ -41,7 +48,7 @@ function toIntelSyntax(source: string): string {
     .replace(/\.L\b/, "2");
 }
 
-const assemblable = entries;
+const assemblable = entries.filter(([source]) => !NOT_8086.has(source));
 
 /**
  * The four near `Jcc` forms that modern gas does not encode the 8086 way.

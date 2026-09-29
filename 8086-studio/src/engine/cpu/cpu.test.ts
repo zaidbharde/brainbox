@@ -770,13 +770,20 @@ describe("shifts and rotates", () => {
     }
   });
 
-  it("takes the immediate form for a count other than one", () => {
-    // C0/C1 are the by-immediate encodings, and they are the only ones that can
-    // express a constant count above one. D0/D1 have no count byte at all, so
-    // reaching for them here would silently shift by one.
-    const assembled = assemble("SHL AX, 4\nHLT", { origin: ORIGIN });
-    expect([...assembled.image.slice(0, 3)]).toEqual([0xc1, 0xe0, 0x04]);
-    const h = com("SHL AX, 4\nHLT", { AX: 0x0001 }).run();
+  it("refuses a count other than one, because 0xC0/0xC1 is not 8086", () => {
+    // This used to assert the opposite, and be satisfied by the bytes
+    // `C1 E0 04`. Those bytes are a reserved opcode on a real 8086: the by-
+    // immediate shift was added on the 80186. Emitting them meant a program ran
+    // here and nowhere else, which is worse than not assembling.
+    //
+    // The 8086 way to shift by a constant is to put it in CL. That is checked
+    // immediately below, and it is what the assembler should now insist on.
+    const result = assemble("SHL AX, 4", { origin: ORIGIN });
+    expect(result.errors.map((d) => d.message)).not.toEqual([]);
+  });
+
+  it("shifts by a constant through CL, the only 8086 way", () => {
+    const h = com("MOV CL, 4\nSHL AX, CL\nHLT", { AX: 0x0001 }).run();
     expect(AX(h)).toBe(0x0010);
   });
 
@@ -1221,44 +1228,6 @@ describe("string instructions", () => {
     }, { ES: 1 });
     expect(h.memory.read8(0, 0x200)).toBe(0xa5);
     expect(h.memory.read8(0, 0x210)).toBe(0xa5);
-  });
-
-  it("reads a block off a port with REP INSW", () => {
-    // INSW is a string instruction: it takes its port from DX, stores through
-    // ES:DI, and steps DI by two per pass. The port itself does not move -- the
-    // device behind it is what supplies the next word -- so both words read the
-    // same two bytes, and it is DI and CX that show the loop ran twice.
-    const h = seeded("MOV DX, 0\nMOV DI, 400h\nMOV CX, 2\nREP INSW\nHLT", {
-      0x300: 0x34, 0x301: 0x12, 0x400: 0xaa, 0x402: 0xbb,
-    });
-    expect(h.memory.read16(0, 0x400)).toBe(0x1234);
-    expect(h.memory.read16(0, 0x402)).toBe(0x1234);
-    expect(h.reg("DI")).toBe(0x404);
-    expect(h.reg("CX")).toBe(0);
-  });
-
-  it("writes a block to a port with REP OUTSB", () => {
-    // The same port receives every byte, so the count is what the register and
-    // the DI step can show here.
-    const h = seeded("MOV AL, 0DEh\nMOV DX, 0\nMOV DI, 500h\nMOV CX, 2\nREP OUTSB\nHLT", {
-      0x300: 0x00,
-    }, { SI: 0x400 });
-    expect(h.memory.read8(0, 0x300)).toBe(0xde);
-    expect(h.reg("DI")).toBe(0x502);
-    expect(h.reg("CX")).toBe(0);
-  });
-
-  it("steps a port block backwards when DF is set", () => {
-    // The two destination bytes are seeded differently so the direction is
-    // visible in where they were overwritten from, and DI is the other half of
-    // it. A CPU that always stepped forwards would leave 0xAA at 400h and put
-    // both writes above 401h.
-    const h = seeded("STD\nMOV DX, 0\nMOV DI, 401h\nMOV CX, 2\nREP INSB\nHLT", {
-      0x300: 0x11, 0x400: 0xaa, 0x401: 0xbb,
-    });
-    expect(h.memory.read8(0, 0x401)).toBe(0x11);
-    expect(h.memory.read8(0, 0x400)).toBe(0x11);
-    expect(h.reg("DI")).toBe(0x3ff);
   });
 });
 
