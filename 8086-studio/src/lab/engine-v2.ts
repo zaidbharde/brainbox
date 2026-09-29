@@ -38,15 +38,15 @@ import { decode, formatOperand, type DecodedInstruction } from '@/engine/cpu/dec
 import { parentRegisterOf, registerEffects } from '@/engine/cpu/effects';
 import { getFlags, type ProgramOutput } from '@/emulator/cpu';
 import type { CPUState, Registers } from '@/types/cpu';
-import type { InstructionView, SourceMapEntry, StepDiagnostics, TraceEntry } from '@/lab/types';
+import { WRITABLE_REGISTERS, type InstructionView, type SourceMapEntry, type StepDiagnostics, type TraceEntry } from '@/lab/types';
 
 /** Where a .COM program starts, and the default the lab has always used. */
 const COM_ORIGIN = 0x100;
 
 /** The registers the lab diffs, in the order it shows them. */
-const REGISTER_NAMES: (keyof Registers)[] = [
-  'AX', 'BX', 'CX', 'DX', 'CS', 'DS', 'ES', 'SS', 'SI', 'DI', 'SP', 'BP', 'IP', 'FLAGS',
-];
+// The same list the panel and the other engine use, so a register one of them
+// does not have cannot be a register only here has.
+const REGISTER_NAMES = WRITABLE_REGISTERS;
 const FLAG_NAMES = ['CF', 'PF', 'AF', 'ZF', 'SF', 'OF'] as const;
 
 /**
@@ -296,6 +296,14 @@ export class V2Session {
    */
   sourceLineAt(ip: number): number | null {
     return findV2SourceLine(this.sourceMap, this.codeSegment, ip & 0xffff);
+  }
+
+  setRegister(name: string, value: number): boolean {
+    if (!(WRITABLE_REGISTERS as readonly string[]).includes(name)) return false;
+    // Through the CPU, so the wrap is the CPU's wrap and a debugger cannot set
+    // a value the engine would not have been able to produce itself.
+    this.cpu.writeReg16(name, value);
+    return true;
   }
 
   sourceMapEntries(): readonly SourceMapEntry[] {

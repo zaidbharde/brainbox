@@ -18,6 +18,7 @@ import {
   type EngineId,
 } from '@/lab/execution-engine';
 import type { DebugSession } from '@/lab/execution-engine';
+import { WRITABLE_REGISTERS } from '@/lab/types';
 
 /** Assemble and step, failing loudly if the program did not assemble. */
 function session(engine: EngineId, source: string): DebugSession {
@@ -878,5 +879,67 @@ describe('addressAtSourceLine', () => {
     expect(subject.addressAtSourceLine(1)).toBeNull();
     expect(subject.addressAtSourceLine(3)).toBeNull();
     expect(subject.sourceLineAt(0), 'and the other direction is empty too').toBeNull();
+  });
+});
+
+/**
+ * Writing a register, because the register panel's fields are editable.
+ *
+ * The interesting properties are that both engines take the same names, that
+ * they wrap the same way, and that a name which is not a register is refused
+ * rather than accepted -- a panel that can add a register to the machine is a
+ * panel whose display and whose engine disagree.
+ */
+describe('setRegister', () => {
+  it('both engines write every register the panel offers', () => {
+    for (const engine of ENGINES) {
+      for (const name of WRITABLE_REGISTERS) {
+        const subject = session(engine, 'HLT');
+        expect(subject.setRegister(name, 0x1234), `${engine} ${name}`).toBe(true);
+        expect(subject.state.registers[name], `${engine} ${name}`).toBe(0x1234);
+      }
+    }
+  });
+
+  it('both engines wrap a value that will not fit', () => {
+    for (const engine of ENGINES) {
+      const subject = session(engine, 'HLT');
+      subject.setRegister('AX', 0x1_2345);
+      expect(subject.state.registers.AX, engine).toBe(0x2345);
+      subject.setRegister('BX', -1);
+      expect(subject.state.registers.BX, engine).toBe(0xffff);
+    }
+  });
+
+  it('both engines refuse a name that is not a register', () => {
+    for (const engine of ENGINES) {
+      const subject = session(engine, 'HLT');
+      for (const name of ['AL', 'EAX', 'SI ', 'si', 'ax', '', 'memory', '__proto__']) {
+        expect(subject.setRegister(name, 1), `${engine} "${name}"`).toBe(false);
+      }
+      expect(subject.state.registers.AX, engine).toBe(subject.state.registers.AX);
+    }
+  });
+
+  it('both engines agree on what a written register does to the next step', () => {
+    // A register panel is only useful if what it writes reaches the machine. Run
+    // the same program on both, after writing the same value, and compare.
+    for (const engine of ENGINES) {
+      const subject = session(engine, 'MOV AX, CX\nHLT');
+      subject.setRegister('CX', 0xbeef);
+      const after = subject.step(1, 0).nextState;
+      expect(after.registers.AX, engine).toBe(0xbeef);
+    }
+  });
+
+  it('writing IP moves the program, on both engines', () => {
+    for (const engine of ENGINES) {
+      const subject = session(engine, 'MOV AX, 1\nMOV BX, 2\nHLT');
+      const second = subject.instructionAddresses()[1];
+      subject.setRegister('IP', second);
+      const after = subject.step(1, 0).nextState;
+      expect(after.registers.BX, engine).toBe(2);
+      expect(after.registers.AX, engine).not.toBe(1);
+    }
   });
 });

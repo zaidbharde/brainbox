@@ -282,6 +282,20 @@ export interface InstructionParts {
   readonly operands: readonly string[];
 }
 
+/**
+ * Every named 16-bit register, in the order the register panel shows them.
+ *
+ * One list, in a module with no engine imports, because both engines and the
+ * panel have to agree on exactly which names exist. Two copies of this list
+ * would drift, and the symptom would be a field that one engine accepts and the
+ * other silently ignores.
+ */
+export const WRITABLE_REGISTERS = [
+  'AX', 'BX', 'CX', 'DX', 'SI', 'DI', 'BP', 'SP', 'CS', 'DS', 'ES', 'SS', 'IP', 'FLAGS',
+] as const;
+
+export type WritableRegister = (typeof WRITABLE_REGISTERS)[number];
+
 export interface ReplaySession {
   version: string;
   createdAtMs: number;

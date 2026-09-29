@@ -823,6 +823,41 @@ export function App() {
     traceLog,
   ]);
 
+  /**
+   * Write a register from the panel, and record that the timeline has changed.
+   *
+   * The snapshot under the cursor is replaced rather than appended to, and
+   * everything after it is dropped. A register the panel just set is not the
+   * state that produced the steps which followed it, so those steps describe a
+   * machine that no longer exists -- keeping them would leave a timeline whose
+   * future silently disagrees with its present. This is the one place in the
+   * debugger that truncates, and it is the same rule an ordinary edit of program
+   * text implies.
+   */
+  const writeDebugRegister = useCallback((name: string, value: number) => {
+    if (!debugSession || isStepping || debugState.halted || debugSnapshots.length === 0) {
+      return;
+    }
+    if (!debugSession.setRegister(name, value)) {
+      return;
+    }
+
+    const safeTimelineIndex = Math.max(0, Math.min(timelineCursor, debugSnapshots.length - 1));
+    const activeSnapshot = restoreExecutionSnapshot(debugSnapshots[safeTimelineIndex]);
+    const nextState = debugSession.state;
+    const nextSnapshots = [
+      ...debugSnapshots.slice(0, safeTimelineIndex),
+      createExecutionSnapshot(nextState, activeSnapshot.output, activeSnapshot.traceLength, activeSnapshot.perf),
+    ];
+
+    setDebugState(nextState);
+    setDebugSnapshots(nextSnapshots);
+    setTimelineCursor(nextSnapshots.length - 1);
+    setSelectedInstructionIndex(nextState.registers.IP);
+    setChangedMemoryWords([]);
+    setDebugStatus(`${name} set to 0x${(value & 0xffff).toString(16).toUpperCase().padStart(4, '0')}.`);
+  }, [debugSession, debugSnapshots, debugState.halted, isStepping, timelineCursor]);
+
   const debugStepBack = useCallback(() => {
     if (timelineCursor <= 0) {
       return;
@@ -2335,6 +2370,8 @@ print "Hello!"`}</pre>
                       registers={debugState.registers}
                       previousRegisters={previousDebugState?.registers}
                       showAllRegisters={true}
+                      onChangeRegister={writeDebugRegister}
+                      readOnly={isStepping || debugState.halted}
                     />
                   </CardContent>
                 </Card>

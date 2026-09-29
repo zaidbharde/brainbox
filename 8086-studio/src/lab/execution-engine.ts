@@ -19,10 +19,11 @@ import { buildSourceMapEntries, findInstructionForSourceLine, findSourceLineForI
 import { V2Session } from '@/lab/engine-v2';
 import type { AssembledProgram, CPUState, Instruction } from '@/types/cpu';
 import type { ProgramOutput } from '@/emulator/cpu';
-import type { InstructionView, SourceMapEntry, StepDiagnostics } from '@/lab/types';
+import { WRITABLE_REGISTERS, type InstructionView, type SourceMapEntry, type StepDiagnostics } from '@/lab/types';
 
 /** Which engine the lab is running. The URL parameter's only accepted value. */
 export type EngineId = 'legacy' | 'v2';
+
 
 export const DEFAULT_ENGINE: EngineId = 'legacy';
 
@@ -87,6 +88,20 @@ export interface DebugSession {
    * hand-written assembly, which is why that panel has never marked lines there.
    */
   sourceMapEntries(): readonly SourceMapEntry[];
+  /**
+   * Write a named register, for the register panel's editable fields.
+   *
+   * Returns false for a name that is not a register, so a caller passing
+   * something from a text field is refused rather than quietly adding a
+   * seventeen-thirteenth register. Values wrap to 16 bits because both engines'
+   * registers are 16 bits wide, and a panel that showed 0x1_0000 in a 16-bit
+   * field would be showing a value the machine cannot hold.
+   *
+   * Writing `IP` moves the program, and writing `FLAGS` sets flags the last
+   * instruction did not compute. Both are what a debugger is for, and both are
+   * why this is on the session rather than folded into a step.
+   */
+  setRegister(name: string, value: number): boolean;
   /**
    * The instruction at an address, or null when the engine cannot say.
    *
@@ -278,6 +293,12 @@ export class LegacySession implements DebugSession {
 
   sourceMapEntries(): readonly SourceMapEntry[] {
     return this.sourceMap;
+  }
+
+  setRegister(name: string, value: number): boolean {
+    if (!(WRITABLE_REGISTERS as readonly string[]).includes(name)) return false;
+    this.current = { ...this.current, registers: { ...this.current.registers, [name]: value & 0xffff } };
+    return true;
   }
 
   /**
