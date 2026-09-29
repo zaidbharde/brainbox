@@ -1,4 +1,4 @@
-#!/bin/zsh
+#!/usr/bin/env bash
 set -euo pipefail
 
 for pid_file in /tmp/brainbox-backend.pid /tmp/brainbox-frontend.pid /tmp/brainbox-x86.pid; do
