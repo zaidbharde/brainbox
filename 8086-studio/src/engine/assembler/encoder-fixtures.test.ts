@@ -10,9 +10,12 @@
  *    spells the *assembler* input, not Intel syntax, so `SHORT`/`NEAR` are
  *    dropped and `.L` becomes the absolute offset gas was aiming at. The
  *    expected bytes still come from gas unchanged.
- *  - `PUSH ES` and `POP DS` are excluded. Those opcodes (0x06, 0x1F) are
- *    x86-64 only; on an 8086 the same bytes are different instructions, so
- *    accepting them would make this engine wrong rather than right.
+ *
+ * `PUSH ES` and `POP DS` used to be excluded, on the claim that opcodes 0x06 and
+ * 0x1F were x86-64/386 additions. They are original 8086 instructions -- the
+ * segment PUSH/POP forms -- and gas's own bytes for them are exactly those
+ * single-byte opcodes, so they are now assembled and compared like any other
+ * fixture. Excluding them was the bug, not the fixture.
  */
 
 import { describe, expect, it } from "vitest";
@@ -22,9 +25,6 @@ import { assemble } from "./assemble";
 type FixtureMap = Record<string, number[]>;
 
 const entries = Object.entries(fixtures as FixtureMap);
-
-/** Opcodes that are not 8086 instructions, so the engine must not emit them. */
-const NOT_8086 = new Set(["PUSH ES", "POP DS"]);
 
 /**
  * `JMP NEAR .L+200` -> `JMP 200`, `JO SHORT .L` -> `JO 2`.
@@ -41,7 +41,7 @@ function toIntelSyntax(source: string): string {
     .replace(/\.L\b/, "2");
 }
 
-const assemblable = entries.filter(([source]) => !NOT_8086.has(source));
+const assemblable = entries;
 
 /**
  * The four near `Jcc` forms that modern gas does not encode the 8086 way.
@@ -68,11 +68,14 @@ describe("encoder against GNU as fixtures", () => {
     expect(assemblable.length).toBeGreaterThanOrEqual(200);
   });
 
-  it("excludes only opcodes that are not 8086 instructions", () => {
-    for (const [source] of entries) {
-      if (!NOT_8086.has(source)) continue;
-      expect(source).toMatch(/^(PUSH ES|POP DS)$/);
-    }
+  it("covers the 8086 segment PUSH/POP forms, which are 8086 after all", () => {
+    // Kept as an explicit test rather than a silent removal: these two were
+    // excluded on a false claim, and the claim is the kind of thing that comes
+    // back if nothing says otherwise.
+    expect(assemble("PUSH ES", { origin: 0 }).image[0]).toBe(0x06);
+    expect(assemble("POP DS", { origin: 0 }).image[0]).toBe(0x1f);
+    expect((fixtures as FixtureMap)["PUSH ES"]).toEqual([0x06]);
+    expect((fixtures as FixtureMap)["POP DS"]).toEqual([0x1f]);
   });
 
   it("encodes near Jcc the 8086 way, not the 386 way", () => {

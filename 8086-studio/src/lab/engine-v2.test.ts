@@ -143,9 +143,11 @@ describe('V2Session', () => {
   });
 
   it('halts with a message rather than throwing on an undecodable instruction', () => {
-    // 06h is unassigned on the 8086, so a data-only program built from it has
-    // nothing to execute. The step must report that, not throw or run on.
-    const s = session('DB 06h\n');
+    // 60h is PUSHA on an 80186 and unassigned on an 8086, so a data-only
+    // program built from it has nothing to execute. The step must report that,
+    // not throw or run on. (06h used to be used here, on the belief that it was
+    // unassigned too; it is `PUSH ES`, so it is a real instruction to run.)
+    const s = session('DB 60h\n');
     const diagnostics = s.step(1, 0);
 
     expect(diagnostics.nextState.halted).toBe(true);

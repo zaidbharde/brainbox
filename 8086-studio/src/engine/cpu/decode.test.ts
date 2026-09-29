@@ -28,16 +28,17 @@ const CASES: ReadonlyArray<[string, number[]]> = Object.entries(fixtures as Fixt
  *   - `0F 8x` is the 386 near-Jcc. An 8086 conditional jump is `7x`/`8x rel16`
  *     only, and this engine spends 0x0F as a private extension escape, so it
  *     cannot also mean "near Jcc" without ambiguity.
- *   - `PUSH ES` (06) and `POP DS` (1F) are 386 additions; on an 8086 they are
- *     undefined opcodes.
+ *
+ * `PUSH ES` (06) and `POP DS` (1F) used to be excluded here on the belief that
+ * they were 386 additions. They are not: they are the 8086 segment `PUSH`/`POP`
+ * forms, and gas's own bytes for them are the single-byte opcodes. They are now
+ * covered by this test like any other fixture.
  */
 const NOT_8086 = new Set<string>([
   "JO NEAR .L+200",
   "JNB NEAR .L+200",
   "JZ NEAR .L+200",
   "JGE NEAR .L+200",
-  "PUSH ES",
-  "POP DS",
 ]);
 
 describe("decode", () => {
@@ -205,9 +206,24 @@ describe("decode: the 8086 boundary", () => {
     expect(result.error).toContain("no BrainBox extension");
   });
 
-  it("rejects the 386 PUSH ES and POP DS", () => {
-    expect(decode(new Uint8Array([0x06])).ok).toBe(false);
-    expect(decode(new Uint8Array([0x1f])).ok).toBe(false);
+  it("decodes 0x06 and 0x1F as the 8086 segment forms, not 386 additions", () => {
+    // These two used to be asserted *undecodable*, on the claim that the 8086
+    // left them undefined. It did not: 0x06 is `PUSH ES` and 0x1F is `POP DS`,
+    // and the encoder fixtures carry gas's own bytes for both. Asserting the
+    // opposite here is what kept the engine from accepting ordinary 8086 code.
+    const push = decode(new Uint8Array([0x06]));
+    expect(push.ok).toBe(true);
+    expect(push.text).toBe("PUSH ES");
+    const pop = decode(new Uint8Array([0x1f]));
+    expect(pop.ok).toBe(true);
+    expect(pop.text).toBe("POP DS");
+  });
+
+  it("leaves 0x0F to the extension escape rather than reading it as POP CS", () => {
+    // POP CS is encodable on real hardware, but 0x0F is this engine's BrainBox
+    // extension space. The byte can only mean one thing.
+    const result = decode(new Uint8Array([0x0f, 0x00]));
+    expect(result.mnem).not.toBe("POP");
   });
 });
 

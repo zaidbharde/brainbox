@@ -173,6 +173,13 @@ export function findCandidates(request: EncodeRequest): InsnDef[] {
         const code = registerCode(operand);
         if (code === undefined || code !== opcodeReg.code) return false;
       }
+      // Same for the segment forms: the shape matches all seven of them, so
+      // the segment named in the source has to be the one the opcode means.
+      const opcodeSreg = def.opcodeSreg;
+      if (opcodeSreg && opcodeSreg.slot === i) {
+        const operand = request.operands[i];
+        if (operand.kind !== "sreg" || operand.code !== opcodeSreg.code) return false;
+      }
     }
     return true;
   });

@@ -273,6 +273,13 @@ function buildInstruction(
     operands[slot] = registerOperand(type, code);
   }
 
+  // A segment-specific opcode: the segment is the instruction, so the operand
+  // comes from the table rather than from any byte in the stream.
+  if (def.opcodeSreg !== undefined) {
+    const { slot, code } = def.opcodeSreg;
+    operands[slot] = { kind: "sreg", name: segmentName(code), code };
+  }
+
   if (def.modrm !== undefined) {
     const byte = reader.u8();
     if (byte === undefined) return truncated(startLength);

@@ -99,6 +99,18 @@ export interface InsnDef {
    * decoder uses it to report the register a byte decodes to.
    */
   readonly opcodeReg?: { slot: OperandSlot; code: number };
+  /**
+   * Set when the opcode names one specific segment register, i.e. the segment
+   * `PUSH`/`POP` forms `0x06 0x07`, `0x0E 0x0F`, `0x16 0x17` and `0x1E 0x1F`,
+   * where there is no ModR/M byte and the segment *is* the instruction.
+   *
+   * This is needed for the same reason `opcodeReg` is. The encoder matches
+   * candidate entries on operand shape, and all seven of these take a single
+   * `sreg`, so without this they would be indistinguishable and `PUSH ES` would
+   * encode to whichever entry the table happened to list first -- assembling
+   * cleanly and then pushing DS. Silent, and worse than a refusal.
+   */
+  readonly opcodeSreg?: { slot: OperandSlot; code: number };
   readonly modrm?: ModRMShape;
   readonly imm?: {
     slot: OperandSlot;
@@ -241,6 +253,42 @@ function buildTable(): InsnDef[] {
         flags: op.flags,
       });
     }
+  }
+
+  // -- 0x06/0x0E/0x16/0x1E: the segment PUSH and POP forms ----------------
+  // These are the `+6`/`+7` slots of the first four 8-byte groups, and on an
+  // 8086 they are the segment register stack forms. `ES` is group 0, `CS` is
+  // group 1, `SS` is group 2 and `DS` is group 3, so the opcode is derivable
+  // from the group exactly as the arithmetic opcodes above are.
+  //
+  // `POP CS` (0x0F) is the one form left out. It is encodable on real
+  // hardware, but 0x0F is this engine's BrainBox extension escape, and a byte
+  // cannot be both. `SALC` (0xD6) and the `AAM`/`AAD` imm forms are omitted for
+  // the ordinary reason: undocumented or not worth a spelling.
+  for (const [code, segment] of [
+    [0, "ES"],
+    [1, "CS"],
+    [2, "SS"],
+    [3, "DS"],
+  ] as const) {
+    const base = code * 8;
+    table.push({
+      mnem: "PUSH",
+      ops: ["sreg"],
+      bytes: [base + 6],
+      opcodeSreg: { slot: 0, code },
+      flags: [],
+      note: `SP -= 2; SS:SP <- ${segment}`,
+    });
+    if (segment === "CS") continue; // 0x0F is the extension escape, not POP CS
+    table.push({
+      mnem: "POP",
+      ops: ["sreg"],
+      bytes: [base + 7],
+      opcodeSreg: { slot: 0, code },
+      flags: [],
+      note: `${segment} <- SS:SP; SP += 2`,
+    });
   }
 
   // -- 0x27/0x2F/0x37/0x3F: the four BCD adjust instructions ----------------
