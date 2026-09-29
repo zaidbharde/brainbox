@@ -24,5 +24,8 @@
     "express": "^4.21.2",
     "node-pty": "^1.1.0",
     "socket.io": "^4.8.1"
+  },
+  "allowScripts": {
+    "node-pty@1.1.0": true
   }
 }
