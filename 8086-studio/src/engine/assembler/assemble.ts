@@ -832,6 +832,11 @@ function writeScalar(ctx: PassContext, elementSize: 8 | 16 | 32, value: number):
 const REPEATABLE = new Set([
   "MOVSB", "MOVSW", "CMPSB", "CMPSW", "STOSB", "STOSW",
   "LODSB", "LODSW", "SCASB", "SCASW",
+  // The port I/O string instructions repeat too, and are the only way to move a
+  // block on or off a port: `REP INSW` reads CX words into ES:DI. Leaving them
+  // out makes the diagnostic above wrong -- they are string instructions, and the
+  // CPU's string path already handles all four.
+  "INSB", "INSW", "OUTSB", "OUTSW",
 ]);
 
 /** Mnemonic to the byte that encodes it. */

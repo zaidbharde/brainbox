@@ -450,8 +450,7 @@ export class Cpu {
           return;
         }
         case 0x0a: {
-          const line = this.read8(this.segment("DS"), this.state.DX & WORD);
-          this.setAL(line);
+          this.readLine();
           return;
         }
         default:
@@ -466,6 +465,44 @@ export class Cpu {
 
   private setAL(value: number): void {
     this.writeReg8(0, value);
+  }
+
+  /**
+   * INT 21h AH=0Ah, buffered line input.
+   *
+   * DS:DX points at a DOS line-input buffer: a capacity byte, a count byte, and
+   * then room for capacity-1 characters and the terminating CR. The characters
+   * come from the same input queue as AH=01/07/08 and the service returns AL=0.
+   *
+   * The count is the characters read, which is not the same as the bytes stored:
+   * DOS does not count the CR that ends the line, so a program that reads the
+   * count back and prints that many bytes gets the line without its terminator.
+   *
+   * The capacity covers the CR as well, so a buffer that fills up drops the CR.
+   * A character that did not fit is left in the queue for the next read rather
+   * than being discarded: a program that reads two lines and gets one has to
+   * find the second one still waiting, not a hole. There is no input to read
+   * here, which is not an error, so this is an empty line and the buffer says so
+   * with a count of zero.
+   */
+  private readLine(): void {
+    this.setAL(0);
+    const base = this.state.DX & WORD;
+    const segment = this.segment("DS");
+    const capacity = this.read8(segment, base);
+    if (capacity < 2) return;
+    let stored = 0;
+    let counted = 0;
+    while (this.inputIndex < this.input.length) {
+      const value = this.input[this.inputIndex++];
+      this.write8(segment, (base + 2 + stored) & WORD, value);
+      stored += 1;
+      if (value === 0x0d) break;
+      counted += 1;
+      // The last slot is reserved for the CR, so a full buffer stops here.
+      if (stored >= capacity - 1) break;
+    }
+    this.write8(segment, (base + 1) & WORD, counted);
   }
 
   // -------------------------------------------------------------- execution
@@ -535,6 +572,28 @@ export class Cpu {
         if (operand.kind !== "mem") return;
         const { disp } = this.addressOf(operand);
         this.writeOperand(ops[mod.reg], disp);
+        return;
+      }
+
+      // LES and LDS read four bytes, not two: the word goes to the register and
+      // the segment to ES or DS. Getting this wrong is not visible in the
+      // register - it reads and writes it correctly - only in the segment, which
+      // is why the segment is loaded second and unconditionally.
+      //
+      // The source is DS by default, and a segment override on an 8086 replaces
+      // DS for *both* words. 286 and later read the second word from DS
+      // regardless; the 8086 rule is the one this engine follows, and the
+      // override is read off the operand rather than assumed.
+      case "LES":
+      case "LDS": {
+        if (mod?.reg === undefined || mod.rm === undefined) return;
+        const source = ops[mod.rm];
+        if (source.kind !== "mem") return;
+        const { disp } = this.addressOf(source);
+        const segment = this.segment((source.address.segment ?? "DS") as "DS");
+        const value = this.read16(segment, disp);
+        this.writeOperand(ops[mod.reg], value);
+        this.writeReg16(mnem === "LES" ? "ES" : "DS", this.read16(segment, wrap16(disp + 2)));
         return;
       }
 
@@ -893,12 +952,31 @@ export class Cpu {
         this.interrupt(ops[0]?.kind === "imm" ? ops[0].value : 0);
         return;
 
+      // The one-byte interrupt, 0xCC. It has no operand byte, so it cannot be
+      // written as `INT 3` in the source and still decode as itself: that spells
+      // CD 03, which is a different instruction with the same effect and two
+      // bytes of its own.
+      case "INT3":
+        this.interrupt(3);
+        return;
+
       case "INTO":
         if (getFlag(this.state.FLAGS, "OF")) this.interrupt(4);
         return;
 
       case "HLT":
         this.state.halted = true;
+        return;
+
+      // 0x90 is XCHG AX, AX on a 486 and later, and XCHG AX, AX on an 8086 too.
+      // Either way the exchange is between a register and itself, so the effect
+      // is nothing at all and no flag changes. Nothing here can observe the
+      // difference, which is the point.
+      //
+      // The single-byte NOP is not a rarity: it is what the compiler's own code
+      // generator emits, and a CPU that decodes 0x90 and then refuses to execute
+      // it stops every generated program that reaches it.
+      case "NOP":
         return;
 
       case "WAIT":
@@ -1017,6 +1095,10 @@ export class Cpu {
       case "LODSW":
       case "SCASB":
       case "SCASW":
+      case "INSB":
+      case "INSW":
+      case "OUTSB":
+      case "OUTSW":
         this.string(instruction);
         return;
 
@@ -1206,6 +1288,7 @@ export class Cpu {
     // is the 8086 rule; the 286 onwards clear OF and CF instead, and matching
     // the legacy means matching the 8086.
     if (iterations === 0) return;
+    const flagsBefore = this.state.FLAGS;
     let current = value;
     let carry = getFlag(this.state.FLAGS, "CF");
     let overflow = false;
@@ -1218,8 +1301,15 @@ export class Cpu {
     this.state.FLAGS = logicFlags(current, bits, this.state.FLAGS);
     this.state.FLAGS = setFlag(this.state.FLAGS, "CF", carry);
     // OF is only architecturally defined for a single-bit shift. A wider shift
-    // leaves it as it was rather than clearing it.
-    if (iterations === 1) this.state.FLAGS = setFlag(this.state.FLAGS, "OF", overflow);
+    // leaves it as it was rather than clearing it, which is the choice that can
+    // be described without appealing to an undefined result. logicFlags clears
+    // OF because a logic operation has no overflow, so it has to be put back
+    // here from the flags as they were before the shift.
+    this.state.FLAGS = setFlag(
+      this.state.FLAGS,
+      "OF",
+      iterations === 1 ? overflow : getFlag(flagsBefore, "OF"),
+    );
     this.writeOperand(ops[slot], current);
   }
 
@@ -1289,10 +1379,17 @@ export class Cpu {
    * MUL and IMUL both set CF and OF when the upper half of the result is not
    * merely a sign or zero extension of the lower half. That single test is the
    * whole rule, and it is easier to state than the two special cases.
+   *
+   * Which bit decides is the only thing that differs between the two forms, and
+   * getting it wrong is invisible on the unsigned 8-bit multiply: the 8-bit
+   * result sits in AX, so reading the sign from bit 15 of the byte form looks
+   * like it works until a negative IMUL puts a sign there and the upper half
+   * that is perfectly correct gets reported as an overflow.
    */
   private setMulFlags(lower: number, high: number, bits: Width): void {
     const mask = maskFor(bits);
-    const expected = (lower & 0x8000) !== 0 ? mask : 0;
+    const signBit = bits === 8 ? 0x80 : 0x8000;
+    const expected = (lower & signBit) !== 0 ? mask : 0;
     const tooLarge = (high & mask) !== expected;
     let flags = this.state.FLAGS;
     flags = setFlag(flags, "CF", tooLarge);
@@ -1374,8 +1471,13 @@ export class Cpu {
     switch (mnem) {
       case "MOVSB":
       case "MOVSW": {
-        const value = this.read8(ds, this.state.SI);
-        this.write8(es, this.state.DI, value);
+        // Read and write at the instruction's width. A byte-wide copy of a word
+        // is self-consistent - both pointers step two, so the loop terminates
+        // and the low bytes all land - and it is invisible until the high bytes
+        // are read back.
+        const value = width === 8 ? this.read8(ds, this.state.SI) : this.read16(ds, this.state.SI);
+        if (width === 8) this.write8(es, this.state.DI, value);
+        else this.write16(es, this.state.DI, value);
         this.state.SI = wrap16(this.state.SI + delta);
         this.state.DI = wrap16(this.state.DI + delta);
         return true;
@@ -1390,7 +1492,11 @@ export class Cpu {
       }
       case "LODSB":
       case "LODSW": {
-        const value = this.read8(ds, this.state.SI);
+        // The read has to be at the instruction's own width as well as the
+        // write. Loading a word through an 8-bit read and then storing it in AX
+        // is self-consistent - SI advances by two and the low byte is right -
+        // so it passes any test that only looks at one register.
+        const value = width === 8 ? this.read8(ds, this.state.SI) : this.read16(ds, this.state.SI);
         if (width === 8) this.setAL(value);
         else this.setAccumulator(value);
         this.state.SI = wrap16(this.state.SI + delta);
@@ -1410,6 +1516,25 @@ export class Cpu {
         const a = width === 8 ? this.readReg8(0) : this.getAccumulator();
         const b = width === 8 ? this.read8(es, this.state.DI) : this.read16(es, this.state.DI);
         this.state.FLAGS = subFlags(a, b, 0, width, this.state.FLAGS).flags;
+        this.state.DI = wrap16(this.state.DI + delta);
+        return true;
+      }
+      // The port I/O string instructions. They share the DI bookkeeping with the
+      // memory ones and the REP form with them, which is why they are handled
+      // here rather than beside IN and OUT: `REP INSW` is the way to pull a
+      // block off a port, and it has to advance DI by two per pass.
+      case "INSB":
+      case "INSW": {
+        const value = width === 8 ? this.portIn(this.state.DX, 8) : this.portIn(this.state.DX, 16);
+        if (width === 8) this.write8(es, this.state.DI, value);
+        else this.write16(es, this.state.DI, value);
+        this.state.DI = wrap16(this.state.DI + delta);
+        return true;
+      }
+      case "OUTSB":
+      case "OUTSW": {
+        const value = width === 8 ? this.readReg8(0) : this.getAccumulator();
+        this.portOut(this.state.DX, width, value);
         this.state.DI = wrap16(this.state.DI + delta);
         return true;
       }

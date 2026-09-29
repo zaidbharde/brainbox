@@ -16,9 +16,10 @@
 
 import { describe, expect, it } from "vitest";
 import { Memory } from "../memory";
-import { Cpu, createInitialState, type CpuState } from "./cpu";
+import { Cpu, createInitialState, type CpuOptions, type CpuState } from "./cpu";
 import { assemble } from "../assembler/assemble";
 import { getFlag, type FlagName } from "../isa/flags";
+import { INSTRUCTION_TABLE } from "../isa/table";
 
 const ORIGIN = 0x100;
 
@@ -29,7 +30,11 @@ interface Harness {
   reg(name: keyof CpuState): number;
 }
 
-function com(source: string, initial: Partial<CpuState> = {}): Harness {
+function com(
+  source: string,
+  initial: Partial<CpuState> = {},
+  options: CpuOptions = {},
+): Harness {
   const assembled = assemble(source, { origin: ORIGIN });
   expect(assembled.errors.map((d) => d.message)).toEqual([]);
   const memory = new Memory();
@@ -41,7 +46,7 @@ function com(source: string, initial: Partial<CpuState> = {}): Harness {
     SP: 0xfffe,
     ...initial,
   };
-  const cpu = new Cpu(memory, state);
+  const cpu = new Cpu(memory, state, options);
   return {
     cpu,
     memory,
@@ -49,7 +54,7 @@ function com(source: string, initial: Partial<CpuState> = {}): Harness {
       cpu.run(5000);
       return this;
     },
-    reg(name) {
+    reg(name: keyof CpuState) {
       return cpu.state[name] as number;
     },
   };
@@ -58,7 +63,50 @@ function com(source: string, initial: Partial<CpuState> = {}): Harness {
 const AX = (h: Harness) => h.cpu.readReg16("AX");
 const AL = (h: Harness) => h.cpu.readReg8(0);
 const AH = (h: Harness) => h.cpu.readReg8(4);
+const hex = (value: number) => `0x${value.toString(16)}`;
 const flag = (h: Harness, name: FlagName) => getFlag(h.cpu.state.FLAGS, name);
+
+/**
+ * A .COM program with memory already filled in at the addresses the program
+ * names. The string instructions and compares need operands that are not
+ * instructions, and putting them in the source would mean the program assembled
+ * its own operands and the test would be checking the assembler as much as the
+ * CPU.
+ */
+function seeded(
+  source: string,
+  bytes: Record<number, number> = {},
+  initial: Partial<CpuState> = {},
+  options: CpuOptions = {},
+): Harness {
+  const memory = new Memory();
+  for (const [address, value] of Object.entries(bytes)) memory.setRaw(Number(address), value);
+  const assembled = assemble(source, { origin: ORIGIN });
+  expect(assembled.errors.map((d) => d.message)).toEqual([]);
+  memory.bytes.set(assembled.image, ORIGIN);
+  const state: CpuState = {
+    ...createInitialState(),
+    IP: ORIGIN,
+    CS: 0,
+    DS: 0,
+    ES: 0,
+    SS: 0,
+    SP: 0xfffe,
+    ...initial,
+  };
+  const cpu = new Cpu(memory, state, options);
+  return {
+    cpu,
+    memory,
+    run() {
+      cpu.run(5000);
+      return this;
+    },
+    reg(name: keyof CpuState) {
+      return cpu.state[name] as number;
+    },
+  }.run();
+}
 
 describe("fetch and decode", () => {
   it("starts at IP and stops at HLT", () => {
@@ -150,6 +198,30 @@ describe("MOV and addressing", () => {
   it("loads an effective address without touching memory", () => {
     const h = com("MOV BX, 40h\nMOV SI, 8\nLEA AX, [BX+SI]\nHLT").run();
     expect(AX(h)).toBe(0x48);
+  });
+
+  it("records no data access for LEA", () => {
+    // LEA computes an address, so the whole point is that it does not read the
+    // byte it names. A step at 0x48 that had been fetched from an 8-bit and a
+    // 16-bit operand would show up here as two reads, and the debugger's memory
+    // highlight would point at an address the program never looked at.
+    const h = com("MOV BX, 40h\nLEA AX, [BX]\nHLT");
+    h.cpu.step();
+    h.cpu.step();
+    expect(AX(h)).toBe(0x40);
+    expect(h.cpu.lastReads).toEqual([]);
+    expect(h.cpu.lastWrites).toEqual([]);
+  });
+
+  it("reads no memory for LEA even where the address is not readable", () => {
+    // The address is computed from the segment and offset alone, so a LEA that
+    // points at nothing is still legal and still writes no read. If this trapped
+    // or recorded a read, the address would have been dereferenced.
+    const h = com("MOV BX, 0FFFFh\nLEA AX, [BX]\nHLT");
+    h.cpu.step();
+    h.cpu.step();
+    expect(AX(h)).toBe(0xffff);
+    expect(h.cpu.lastReads).toEqual([]);
   });
 
   it("moves 8-bit halves independently", () => {
@@ -435,6 +507,30 @@ describe("multiplies and divides", () => {
     expect(h.reg("DX")).toBe(1);
   });
 
+  it("multiplies 8-bit with sign", () => {
+    // -12 * 10 = -120, which as a 16-bit two's complement is 0xFF88. Unsigned
+    // the same pair would give 0x0ED0, so this cannot pass by accident.
+    const h = com("MOV AX, 0\nMOV AL, 0F4h\nMOV BL, 10\nIMUL BL\nHLT").run();
+    expect(AX(h)).toBe(0xff88);
+    expect(flag(h, "CF")).toBe(false);
+  });
+
+  it("multiplies 8-bit with sign and reports an overflow the same way", () => {
+    // -128 * -128 is 16384, which needs 16 bits: the same overflow report as
+    // MUL, from the same unsigned result, so CF is the only thing that differs.
+    const h = com("MOV AL, 80h\nMOV BL, 80h\nIMUL BL\nHLT").run();
+    expect(AX(h)).toBe(0x4000);
+    expect(flag(h, "CF")).toBe(true);
+  });
+
+  it("multiplies 16-bit with sign into DX:AX", () => {
+    // -1000 * 10 = -10000 = 0xFFFFD8F0.
+    const h = com("MOV AX, 0FC18h\nMOV BX, 10\nIMUL BX\nHLT").run();
+    expect(AX(h)).toBe(0xd8f0);
+    expect(h.reg("DX")).toBe(0xffff);
+    expect(flag(h, "CF")).toBe(false);
+  });
+
   it("divides 8-bit into AL quotient and AH remainder", () => {
     const h = com("MOV AX, 0\nMOV AL, 100\nMOV BL, 7\nDIV BL\nHLT").run();
     expect(AL(h)).toBe(14);
@@ -454,14 +550,44 @@ describe("multiplies and divides", () => {
     expect(AH(h)).toBe(0xfe);
   });
 
+  it("signs the 16-bit dividend for IDIV", () => {
+    // -1000 / 7 = -142 remainder -6: AX = 0xFF72, DX = 0xFFFA.
+    const h = com("MOV DX, 0FFFFh\nMOV AX, 0FC18h\nMOV BX, 7\nIDIV BX\nHLT").run();
+    expect(AX(h)).toBe(0xff72);
+    expect(h.reg("DX")).toBe(0xfffa);
+  });
+
   it("traps a divide by zero instead of hanging", () => {
     const h = com("MOV AX, 5\nMOV BX, 0\nDIV BX\nHLT").run();
     expect(h.cpu.state.halted).toBe(true);
     expect(h.cpu.state.error).toContain("divide error");
   });
 
+  it("traps a 16-bit divide by zero", () => {
+    // The 16-bit form divides DX:AX, so a zero divisor has to be caught there
+    // too: trapping only the 8-bit form would leave this hanging.
+    const h = com("MOV DX, 0\nMOV AX, 5\nMOV BX, 0\nDIV BX\nHLT").run();
+    expect(h.cpu.state.halted).toBe(true);
+    expect(h.cpu.state.error).toContain("divide error");
+  });
+
   it("traps a quotient that cannot be represented", () => {
     const h = com("MOV AX, 0\nMOV AL, 0FFh\nMOV BL, 1\nIDIV BL\nHLT").run();
+    expect(h.cpu.state.error).toContain("divide error");
+  });
+
+  it("traps a 16-bit quotient that cannot be represented", () => {
+    // DX:AX = 0x00010000 divided by 1 is 0x10000, which does not fit in AX. An
+    // implementation that truncated would leave a quiet 0 in AX and 0 in DX.
+    const h = com("MOV DX, 10h\nMOV AX, 0\nMOV BX, 1\nDIV BX\nHLT").run();
+    expect(h.cpu.state.halted).toBe(true);
+    expect(h.cpu.state.error).toContain("divide error");
+  });
+
+  it("traps a 16-bit signed quotient that cannot be represented", () => {
+    // -2147483648 / 1 has no 16-bit quotient.
+    const h = com("MOV DX, 8000h\nMOV AX, 0\nMOV BX, 1\nIDIV BX\nHLT").run();
+    expect(h.cpu.state.halted).toBe(true);
     expect(h.cpu.state.error).toContain("divide error");
   });
 
@@ -523,6 +649,156 @@ describe("shifts and rotates", () => {
   it("does nothing when the masked count is zero", () => {
     const h = com("MOV AL, 42h\nMOV CL, 32\nSHL AL, CL\nHLT").run();
     expect(AL(h)).toBe(0x42);
+  });
+
+  it("reaches all four shift and rotate opcode forms", () => {
+    // D0/D1 shift by one, D2/D3 by CL, and the D0/D2 pair is the 8-bit form. The
+    // four are separate decode paths, so covering only "shift by 1" and "shift by
+    // CL" on a word operand would leave three of them untested.
+    //
+    // Both bytes are asserted, not just the opcode. Within one of these groups
+    // the /digit in the ModRM byte is the *only* thing that says which operation
+    // it is, so a form that came out as the right opcode with the wrong digit
+    // would execute as a different instruction while every value-only assertion
+    // still passed - the assembler and the decoder would simply agree on the
+    // wrong thing. A count written as 1 uses the implied-one opcode rather than
+    // the immediate form, which is what masm and gas emit and what the encoder
+    // fixtures already pin.
+    const cases: ReadonlyArray<{
+      source: string;
+      bytes: readonly [number, number];
+      initial?: Partial<CpuState>;
+      wantAX: number;
+      wantCF: boolean;
+    }> = [
+      { source: "SHL AL, 1", bytes: [0xd0, 0xe0], initial: { AX: 0x0081 }, wantAX: 0x02, wantCF: true },
+      { source: "SHL AX, 1", bytes: [0xd1, 0xe0], initial: { AX: 0x8100 }, wantAX: 0x0200, wantCF: true },
+      { source: "SHL AL, CL", bytes: [0xd2, 0xe0], initial: { AX: 0x0001, CX: 0x0004 }, wantAX: 0x10, wantCF: false },
+      { source: "SHL AX, CL", bytes: [0xd3, 0xe0], initial: { AX: 0x0001, CX: 0x0004 }, wantAX: 0x0010, wantCF: false },
+      { source: "ROL AL, 1", bytes: [0xd0, 0xc0], initial: { AX: 0x0081 }, wantAX: 0x03, wantCF: true },
+      { source: "ROL AX, 1", bytes: [0xd1, 0xc0], initial: { AX: 0x8100 }, wantAX: 0x0201, wantCF: true },
+      { source: "ROL AL, CL", bytes: [0xd2, 0xc0], initial: { AX: 0x0001, CX: 0x0004 }, wantAX: 0x10, wantCF: false },
+      { source: "ROL AX, CL", bytes: [0xd3, 0xc0], initial: { AX: 0x0001, CX: 0x0004 }, wantAX: 0x0010, wantCF: false },
+      { source: "SAR AL, 1", bytes: [0xd0, 0xf8], initial: { AX: 0x0080 }, wantAX: 0xc0, wantCF: false },
+      { source: "SAR AX, 1", bytes: [0xd1, 0xf8], initial: { AX: 0x8000 }, wantAX: 0xc000, wantCF: false },
+      { source: "SAR AL, CL", bytes: [0xd2, 0xf8], initial: { AX: 0x0080, CX: 0x0004 }, wantAX: 0xf8, wantCF: false },
+      { source: "SAR AX, CL", bytes: [0xd3, 0xf8], initial: { AX: 0x8000, CX: 0x0004 }, wantAX: 0xf800, wantCF: false },
+      { source: "SHR AL, 1", bytes: [0xd0, 0xe8], initial: { AX: 0x0081 }, wantAX: 0x40, wantCF: true },
+      // RCR takes the carry in, so this depends on CF being clear: 0x81 shifts
+      // right to 0x40 and the old carry of 0 goes into the top bit.
+      { source: "RCR AL, 1", bytes: [0xd0, 0xd8], initial: { AX: 0x0081 }, wantAX: 0x40, wantCF: true },
+      { source: "ROR AL, 1", bytes: [0xd0, 0xc8], initial: { AX: 0x0081 }, wantAX: 0xc0, wantCF: true },
+    ];
+    const failures: string[] = [];
+    for (const testCase of cases) {
+      const assembled = assemble(`${testCase.source}\nHLT`, { origin: ORIGIN });
+      expect(assembled.errors.map((d) => d.message)).toEqual([]);
+      // The shift is the first instruction, and every form in these groups is
+      // exactly two bytes, so the first two bytes of the image are its encoding.
+      const encoded = [...assembled.image.slice(0, 2)];
+      if (encoded[0] !== testCase.bytes[0] || encoded[1] !== testCase.bytes[1]) {
+        failures.push(
+          `${testCase.source}: want ${testCase.bytes.map(hex).join(" ")} got ${encoded.map(hex).join(" ")}`,
+        );
+      }
+      const h = com(`${testCase.source}\nHLT`, testCase.initial ?? {}).run();
+      if (AX(h) !== testCase.wantAX) {
+        failures.push(`${testCase.source}: want AX ${hex(testCase.wantAX)} got ${hex(AX(h))}`);
+      }
+      if (flag(h, "CF") !== testCase.wantCF) {
+        failures.push(`${testCase.source}: want CF ${testCase.wantCF} got ${flag(h, "CF")}`);
+      }
+    }
+    expect(failures).toEqual([]);
+  });
+
+  it("puts the right register in the r/m field at both widths", () => {
+    // AL/CL/DL/BL and AX/CX/DX/BX share their r/m numbers, so a mix-up between
+    // the widths cannot show up in the first four registers of either. The top
+    // four are where it can: 4 is AH at 8 bits and SP at 16, and 5 is CH and BP.
+    // A `shl sp,1` that came out as `d1 e4` would shift AH instead.
+    const byte = (source: string) => {
+      const assembled = assemble(`${source}\nHLT`, { origin: ORIGIN });
+      expect(assembled.errors.map((d) => d.message)).toEqual([]);
+      return [...assembled.image.slice(0, 2)];
+    };
+    const eight = ["AL", "CL", "DL", "BL", "AH", "CH", "DH", "BH"];
+    const sixteen = ["AX", "CX", "DX", "BX", "SP", "BP", "SI", "DI"];
+    for (const [index, register] of eight.entries()) {
+      expect(byte(`SHL ${register}, 1`), register).toEqual([0xd0, 0xe0 | index]);
+    }
+    for (const [index, register] of sixteen.entries()) {
+      expect(byte(`SHL ${register}, 1`), register).toEqual([0xd1, 0xe0 | index]);
+    }
+  });
+
+  it("shifts SP, BP, SI and DI rather than their high-byte namesakes", () => {
+    // The encoding test above says which register was named; this says the
+    // value really moved, so a decoder that agreed with the wrong encoder would
+    // still be caught. None of these four can be loaded from an immediate - the
+    // 8086 has no `mov sreg, imm16` - so they are seeded through the initial
+    // state, which is the only way to name them without a load sequence that
+    // would itself use the register.
+    for (const [register, slot] of [
+      ["BP", "BP"],
+      ["SI", "SI"],
+      ["DI", "DI"],
+      ["CX", "CX"],
+      ["DX", "DX"],
+      ["BX", "BX"],
+    ] as const) {
+      const h = com(`SHL ${register}, 1\nHLT`, { [slot]: 0x0100, AX: 0x0200 }).run();
+      expect(h.cpu.readReg16(slot), register).toBe(0x0200);
+      // AX holds 0x0200, whose high byte is a second 0x0200 in the same place
+      // AH would be, so a shift that hit AH would show up as AX changing.
+      expect(AX(h), `${register} must not have touched AX`).toBe(0x0200);
+    }
+    // SP is the stack pointer and is set up by the harness, so it is checked
+    // through a push: SP is 0xFFFE, and shifting it gives 0xFFFC.
+    const h = com("SHL SP, 1\nPUSH AX\nPOP BX\nHLT", { AX: 0x1234 }).run();
+    expect(h.reg("SP")).toBe(0xfffc);
+    expect(h.reg("BX")).toBe(0x1234);
+  });
+
+  it("shifts the high byte registers rather than the stack ones", () => {
+    // The same eight r/m numbers, read at 8 bits. AH/CH/DH/BH are 4/5/6/7 here
+    // and SP/BP/SI/DI are 4/5/6/7 at 16 bits, so this and the test above are
+    // the only way to tell the two decoders apart.
+    for (const [code, register] of ["AH", "CH", "DH", "BH"].entries()) {
+      const h = com(`SHL ${register}, 1\nHLT`, { AX: 0x0100, CX: 0x0100, DX: 0x0100, BX: 0x0100 }).run();
+      expect(h.cpu.readReg8(4 + code), register).toBe(0x02);
+    }
+  });
+
+  it("takes the immediate form for a count other than one", () => {
+    // C0/C1 are the by-immediate encodings, and they are the only ones that can
+    // express a constant count above one. D0/D1 have no count byte at all, so
+    // reaching for them here would silently shift by one.
+    const assembled = assemble("SHL AX, 4\nHLT", { origin: ORIGIN });
+    expect([...assembled.image.slice(0, 3)]).toEqual([0xc1, 0xe0, 0x04]);
+    const h = com("SHL AX, 4\nHLT", { AX: 0x0001 }).run();
+    expect(AX(h)).toBe(0x0010);
+  });
+
+  it("leaves OF alone for a shift of more than one bit", () => {
+    // OF is only defined for a single-bit shift, so a wider one has to leave it
+    // as it was rather than clear it or compute something. 0x7F + 1 overflows,
+    // and nothing after it writes OF.
+    const h = com("MOV AL, 7Fh\nMOV BL, 1\nADD AL, BL\nMOV CL, 4\nSHL AL, CL\nHLT").run();
+    expect(flag(h, "OF")).toBe(true);
+    expect(AL(h)).toBe(0x00);
+    expect(flag(h, "CF")).toBe(false);
+  });
+
+  it("computes OF for a shift of exactly one bit", () => {
+    // The one case where the flag is defined: shifting a positive value into the
+    // sign bit twice in a row is the overflow, and it is computed rather than
+    // inherited, so a clear OF beforehand does not survive.
+    const h = com("MOV AL, 40h\nSHL AL, 1\nHLT").run();
+    expect(AL(h)).toBe(0x80);
+    expect(flag(h, "OF")).toBe(true);
+    const clear = com("MOV AX, 0\nCLC\nMOV AL, 40h\nSHL AL, 1\nHLT").run();
+    expect(flag(clear, "OF")).toBe(true);
   });
 });
 
@@ -620,6 +896,39 @@ describe("stack", () => {
       "MOV AX, 1234h\nPUSH AX\nMOV BP, SP\nMOV BX, [BP]\nPOP AX\nHLT",
     ).run();
     expect(h.reg("BX")).toBe(0x1234);
+  });
+
+  it("pushes the stack pointer it had, not the one it has", () => {
+    // PUSH SP pushes the *old* SP, which is the value 8086 documentation shows
+    // and the one every program that uses this depends on to find its own frame.
+    // The 80186 changed it to push the decremented value, so an implementation
+    // that reads SP after the decrement is off by two - and a program that
+    // computed a frame size from what it pushed would be wrong by two.
+    const h = com("MOV SP, 0F00h\nPUSH SP\nPOP BX\nHLT").run();
+    expect(h.reg("BX")).toBe(0x0f00);
+    // The POP put the two bytes back, so SP is where it started.
+    expect(h.reg("SP")).toBe(0x0f00);
+  });
+
+  it("reads SP before the decrement, not after", () => {
+    // The same instruction with the popped value left alone. If SP were read
+    // after the decrement the popped value would be 0x0EFE, and the two
+    // assertions above and here are the only way to tell the two apart.
+    const h = com("MOV SP, 0F00h\nPUSH SP\nHLT");
+    h.cpu.run(3);
+    expect(h.reg("SP")).toBe(0x0efe);
+    // The word really is at the new top of stack, not at the old one.
+    expect(h.memory.read16(0, 0x0efe)).toBe(0x0f00);
+  });
+
+  it("records the stack write for PUSH SP as a write", () => {
+    // The debugger highlights memory from lastReads/lastWrites, so a PUSH that
+    // wrote without recording would leave the stack invisible in the UI.
+    const h = com("MOV SP, 0F00h\nPUSH SP\nHLT");
+    h.cpu.run(2);
+    h.cpu.step();
+    expect(h.cpu.lastWrites).toEqual([0x0efe, 0x0eff]);
+    expect(h.cpu.lastReads).toEqual([]);
   });
 });
 
@@ -728,13 +1037,299 @@ describe("string instructions", () => {
   });
 
   it("loads with LODSW", () => {
-    const h = com("MOV SI, 200h\nLODSW\nHLT").run();
-    expect(AX(h)).toBe(h.memory.read16(0, 0x200));
+    // The value is written out rather than read back out of the same memory:
+    // `expect(AX).toBe(memory.read16(...))` passes for a load that read only the
+    // low byte, because the memory being compared against is the memory the load
+    // was supposed to read. Both bytes have to be non-zero and different.
+    const h = seeded("MOV SI, 200h\nLODSW\nHLT", { 0x200: 0x34, 0x201: 0x12 });
+    expect(AX(h)).toBe(0x1234);
+    expect(h.reg("SI")).toBe(0x202);
+  });
+
+  it("moves a word block with MOVSW", () => {
+    // The same trap as LODSW: a byte-wide move leaves the high byte of each
+    // destination as it was, so the source has to be seeded with a pattern where
+    // a zero high byte would be visible.
+    const h = seeded("MOV SI, 200h\nMOV DI, 300h\nMOV CX, 2\nREP MOVSW\nHLT", {
+      0x200: 0x34, 0x201: 0x12, 0x202: 0x78, 0x203: 0x56,
+    });
+    expect(h.memory.read16(0, 0x300)).toBe(0x1234);
+    expect(h.memory.read16(0, 0x302)).toBe(0x5678);
+    expect(h.reg("SI")).toBe(0x204);
+    expect(h.reg("DI")).toBe(0x304);
   });
 
   it("scans with SCASB", () => {
-    const h = com("MOV AL, 5\nMOV DI, 0\nMOV CX, 4\nREPNE SCASB\nHLT").run();
+    // With no match, the string scan runs through all four and ends with CX=0.
+    const h = seeded("MOV AL, 5\nMOV DI, 200h\nMOV CX, 4\nREPNE SCASB\nHLT", {
+      0x200: 0x01, 0x201: 0x02, 0x202: 0x03, 0x203: 0x04,
+    });
     expect(h.cpu.state.halted).toBe(true);
+    expect(h.reg("CX")).toBe(0);
+    expect(h.reg("DI")).toBe(0x204);
+  });
+
+  it("stops a REPNE compare on the first pass when the bytes are equal", () => {
+    // The discriminating case for the two prefixes. A byte that equals itself
+    // sets ZF, which is what REPE wants to keep going and what REPNE wants to
+    // stop for, so one pass and CX is one short of zero. A loop that ignored the
+    // prefix and always continued would run all four.
+    const h = seeded("MOV SI, 200h\nMOV DI, 200h\nMOV CX, 4\nREPNE CMPSB\nHLT", { 0x200: 0x41 });
+    expect(h.reg("CX")).toBe(3);
+    expect(flag(h, "ZF")).toBe(true);
+  });
+
+  it("stops a REPE compare on the first pass when the bytes differ", () => {
+    // The mirror image: a difference clears ZF, which ends a REPE.
+    const h = seeded("MOV SI, 200h\nMOV DI, 210h\nMOV CX, 4\nREPE CMPSB\nHLT", { 0x200: 0x41, 0x210: 0x42 });
+    expect(h.reg("CX")).toBe(3);
+    expect(flag(h, "ZF")).toBe(false);
+  });
+
+  it("runs a REPE compare to the count when every byte matches", () => {
+    const h = seeded("MOV SI, 200h\nMOV DI, 210h\nMOV CX, 4\nREPE CMPSB\nHLT", {
+      0x200: 0x41, 0x201: 0x42, 0x202: 0x43, 0x203: 0x44,
+      0x210: 0x41, 0x211: 0x42, 0x212: 0x43, 0x213: 0x44,
+    });
+    expect(h.reg("CX")).toBe(0);
+    expect(h.reg("SI")).toBe(0x204);
+    expect(h.reg("DI")).toBe(0x214);
+  });
+
+  it("counts a word compare in elements, not bytes", () => {
+    // CX is the number of comparisons, so a word compare of four words is four
+    // passes over eight bytes. Reading it as a byte count would move SI and DI
+    // sixteen bytes and finish early.
+    const h = seeded("MOV SI, 200h\nMOV DI, 210h\nMOV CX, 4\nREPE CMPSW\nHLT", {
+      0x200: 0x01, 0x201: 0x00, 0x202: 0x02, 0x203: 0x00, 0x204: 0x03, 0x205: 0x00, 0x206: 0x04, 0x207: 0x00,
+      0x210: 0x01, 0x211: 0x00, 0x212: 0x02, 0x213: 0x00, 0x214: 0x03, 0x215: 0x00, 0x216: 0x04, 0x217: 0x00,
+    });
+    expect(h.reg("CX")).toBe(0);
+    expect(h.reg("SI")).toBe(0x208);
+    expect(h.reg("DI")).toBe(0x218);
+  });
+
+  it("stops a REPE SCASB on the first byte that differs", () => {
+    // SCASB compares AL against ES:DI and does not move SI at all, so the only
+    // way to tell it from CMPSB is which register the result ends up in. REPE
+    // is the "while equal" form, so a difference is what ends it: one pass, and
+    // the comparison is the pass that found the difference.
+    const h = seeded("MOV AL, 42h\nMOV DI, 200h\nMOV CX, 4\nREPE SCASB\nHLT", {
+      0x200: 0x41, 0x201: 0x42, 0x202: 0x43,
+    });
+    expect(h.reg("CX")).toBe(3);
+    expect(h.reg("DI")).toBe(0x201);
+    expect(h.reg("SI")).toBe(0);
+    expect(flag(h, "ZF")).toBe(false);
+  });
+
+  it("keeps a REPE SCASB going past a byte that matches", () => {
+    // The pass that continues. A scan that stopped on the first comparison it
+    // made would also produce CX=3 here, so only the count and DI together show
+    // that the match was allowed through and the difference after it was not.
+    const h = seeded("MOV AL, 41h\nMOV DI, 200h\nMOV CX, 4\nREPE SCASB\nHLT", {
+      0x200: 0x41, 0x201: 0x42, 0x202: 0x43,
+    });
+    expect(h.reg("CX")).toBe(2);
+    expect(h.reg("DI")).toBe(0x202);
+    expect(flag(h, "ZF")).toBe(false);
+  });
+
+  it("keeps a REPNE SCASB going until it finds the byte", () => {
+    // The mirror image, and the one a scan loop in a real program is written
+    // for: look for a match, and the match is what stops it.
+    const h = seeded("MOV AL, 42h\nMOV DI, 200h\nMOV CX, 4\nREPNE SCASB\nHLT", {
+      0x200: 0x41, 0x201: 0x42, 0x202: 0x43,
+    });
+    expect(h.reg("CX")).toBe(2);
+    expect(h.reg("DI")).toBe(0x202);
+    expect(flag(h, "ZF")).toBe(true);
+  });
+
+  it("runs a SCASW to the count with REPNE when nothing matches", () => {
+    const h = seeded("MOV AX, 0\nMOV DI, 200h\nMOV CX, 3\nREPNE SCASW\nHLT", {
+      0x200: 0x01, 0x201: 0x00, 0x202: 0x02, 0x203: 0x00, 0x204: 0x03, 0x205: 0x00,
+    });
+    expect(h.reg("CX")).toBe(0);
+    expect(h.reg("DI")).toBe(0x206);
+  });
+
+  it("moves a byte block with MOVSB", () => {
+    const h = seeded("MOV SI, 200h\nMOV DI, 300h\nMOV CX, 3\nREP MOVSB\nHLT", {
+      0x200: 0xde, 0x201: 0xad, 0x202: 0xbe,
+    });
+    expect([h.memory.read8(0, 0x300), h.memory.read8(0, 0x301), h.memory.read8(0, 0x302)]).toEqual([0xde, 0xad, 0xbe]);
+    expect(h.reg("SI")).toBe(0x203);
+    expect(h.reg("DI")).toBe(0x303);
+  });
+
+  it("moves backwards when DF is set", () => {
+    // Both pointers step the other way, and the block has to be copied from the
+    // top down or a real 8086 would overwrite bytes it has yet to read.
+    const h = seeded("STD\nMOV SI, 202h\nMOV DI, 302h\nMOV CX, 3\nREP MOVSB\nHLT", {
+      0x200: 0xde, 0x201: 0xad, 0x202: 0xbe,
+    });
+    expect([h.memory.read8(0, 0x300), h.memory.read8(0, 0x301), h.memory.read8(0, 0x302)]).toEqual([0xde, 0xad, 0xbe]);
+    expect(h.reg("SI")).toBe(0x1ff);
+    expect(h.reg("DI")).toBe(0x2ff);
+  });
+
+  it("steps a load by one byte and by two", () => {
+    const bytes = seeded("MOV SI, 200h\nLODSB\nLODSB\nHLT", { 0x200: 0x11, 0x201: 0x22 });
+    expect(AL(bytes)).toBe(0x22);
+    expect(bytes.reg("SI")).toBe(0x202);
+    const words = seeded("MOV SI, 200h\nLODSW\nHLT", { 0x200: 0x34, 0x201: 0x12 });
+    expect(AX(words)).toBe(0x1234);
+    expect(words.reg("SI")).toBe(0x202);
+  });
+
+  it("fills two bytes at a time with STOSW", () => {
+    const h = com("MOV AX, 0BEEFh\nMOV DI, 400h\nMOV CX, 2\nREP STOSW\nHLT").run();
+    expect(h.memory.read16(0, 0x400)).toBe(0xbeef);
+    expect(h.memory.read16(0, 0x402)).toBe(0xbeef);
+    expect(h.memory.read8(0, 0x404)).toBe(0);
+    expect(h.reg("DI")).toBe(0x404);
+    // AL is the byte that is stored, so a word form does not need AX afterwards.
+    expect(AL(h)).toBe(0xef);
+  });
+
+  it("moves SI and DI only when the count says so", () => {
+    // Without a prefix a string instruction runs once and leaves CX alone. A
+    // prefix that was decoded but not acted on would take all four passes here.
+    const h = seeded("MOV SI, 200h\nMOV DI, 300h\nMOV CX, 4\nMOVSB\nHLT", { 0x200: 0x41 });
+    expect(h.reg("CX")).toBe(4);
+    expect(h.reg("SI")).toBe(0x201);
+    expect(h.reg("DI")).toBe(0x301);
+  });
+
+  it("takes SI from DS and DI from ES for a move", () => {
+    // The source and destination of a string instruction are in different
+    // segments, so an override on one of them is the only way to move across.
+    // A shared default segment would make this read and write the same place.
+    const h = seeded("MOV SI, 200h\nMOV DI, 300h\nMOV CX, 1\nES: REP MOVSB\nHLT", { 0x200: 0x5a });
+    expect(h.memory.read8(0, 0x300)).toBe(0x5a);
+  });
+
+  it("reaches a different segment only when the segments really differ", () => {
+    // The test above is not enough on its own: with DS and ES both zero the
+    // override changes nothing observable, so a CPU that ignored ES entirely
+    // would pass it. Here ES is genuinely elsewhere -- physical 210h, because a
+    // segment is shifted up by four -- and the destination starts empty, so a
+    // write that went to DS:DI instead of ES:DI would leave 210h untouched.
+    const h = seeded("MOV AX, 1\nMOV ES, AX\nMOV SI, 200h\nMOV DI, 200h\nMOV CX, 1\nREP MOVSB\nHLT", {
+      0x200: 0xa5,
+    }, { ES: 1 });
+    expect(h.memory.read8(0, 0x200)).toBe(0xa5);
+    expect(h.memory.read8(0, 0x210)).toBe(0xa5);
+  });
+
+  it("reads a block off a port with REP INSW", () => {
+    // INSW is a string instruction: it takes its port from DX, stores through
+    // ES:DI, and steps DI by two per pass. The port itself does not move -- the
+    // device behind it is what supplies the next word -- so both words read the
+    // same two bytes, and it is DI and CX that show the loop ran twice.
+    const h = seeded("MOV DX, 0\nMOV DI, 400h\nMOV CX, 2\nREP INSW\nHLT", {
+      0x300: 0x34, 0x301: 0x12, 0x400: 0xaa, 0x402: 0xbb,
+    });
+    expect(h.memory.read16(0, 0x400)).toBe(0x1234);
+    expect(h.memory.read16(0, 0x402)).toBe(0x1234);
+    expect(h.reg("DI")).toBe(0x404);
+    expect(h.reg("CX")).toBe(0);
+  });
+
+  it("writes a block to a port with REP OUTSB", () => {
+    // The same port receives every byte, so the count is what the register and
+    // the DI step can show here.
+    const h = seeded("MOV AL, 0DEh\nMOV DX, 0\nMOV DI, 500h\nMOV CX, 2\nREP OUTSB\nHLT", {
+      0x300: 0x00,
+    }, { SI: 0x400 });
+    expect(h.memory.read8(0, 0x300)).toBe(0xde);
+    expect(h.reg("DI")).toBe(0x502);
+    expect(h.reg("CX")).toBe(0);
+  });
+
+  it("steps a port block backwards when DF is set", () => {
+    // The two destination bytes are seeded differently so the direction is
+    // visible in where they were overwritten from, and DI is the other half of
+    // it. A CPU that always stepped forwards would leave 0xAA at 400h and put
+    // both writes above 401h.
+    const h = seeded("STD\nMOV DX, 0\nMOV DI, 401h\nMOV CX, 2\nREP INSB\nHLT", {
+      0x300: 0x11, 0x400: 0xaa, 0x401: 0xbb,
+    });
+    expect(h.memory.read8(0, 0x401)).toBe(0x11);
+    expect(h.memory.read8(0, 0x400)).toBe(0x11);
+    expect(h.reg("DI")).toBe(0x3ff);
+  });
+});
+
+describe("programs built with macros", () => {
+  // The assembler tests cover what a macro expands to. These run the expansion,
+  // because a macro can produce an image that assembles and still be the wrong
+  // program: the CPU is what has to execute it.
+  it("runs a macro that substitutes its argument", () => {
+    const h = com("DELAY MACRO n\n  MOV CX, n\n  LOOP $\nENDM\n  DELAY 4\n  MOV AX, 1234h\n  HLT").run();
+    expect(AX(h)).toBe(0x1234);
+    expect(h.reg("CX")).toBe(0);
+  });
+
+  it("runs the same macro twice with different arguments", () => {
+    // The parameter has to be substituted per invocation, not bound by the first
+    // one, and both invocations have to end up in the trace.
+    const h = com(
+      [
+        "ADD MACRO v",
+        "  MOV AX, v",
+        "  PUSH AX",
+        "ENDM",
+        "  ADD 1111h",
+        "  ADD 2222h",
+        "  POP DX",
+        "  POP BX",
+        "  HLT",
+      ].join("\n"),
+    ).run();
+    expect(h.reg("BX")).toBe(0x1111);
+    expect(h.reg("DX")).toBe(0x2222);
+  });
+
+  it("gives each invocation of a macro its own local label", () => {
+    // A shared label would make the second invocation's JMP land on the first
+    // one's target. The count of instructions in the trace is what shows the two
+    // expansions are separate, and the value shows each loop ran to its own end.
+    const h = com(
+      [
+        "SPIN MACRO",
+        "  MOV CX, 2",
+        "again:",
+        "  LOOP again",
+        "ENDM",
+        "  SPIN",
+        "  SPIN",
+        "  HLT",
+      ].join("\n"),
+    ).run();
+    // MOV CX,2 then LOOP twice, three instructions, twice, then HLT.
+    expect(h.cpu.trace).toHaveLength(7);
+    expect(h.cpu.state.halted).toBe(true);
+  });
+
+  it("runs a macro that uses a repeat prefix", () => {
+    // The prefix and the macro interact through the same two-byte encoding, so
+    // this is where a macro body could pick up the wrong repeat kind.
+    const h = com(
+      [
+        "FILL MACRO v",
+        "  MOV AL, v",
+        "  MOV DI, 400h",
+        "  MOV CX, 3",
+        "  REP STOSB",
+        "ENDM",
+        "  FILL 5Ah",
+        "  HLT",
+      ].join("\n"),
+    ).run();
+    expect([h.memory.read8(0, 0x400), h.memory.read8(0, 0x402)]).toEqual([0x5a, 0x5a]);
+    expect(h.reg("DI")).toBe(0x403);
   });
 });
 
@@ -842,6 +1437,65 @@ describe("BrainBox extensions", () => {
     const h = com("STC\nMOV AL, 41h\nOUTC AL\nHLT").run();
     expect(flag(h, "CF")).toBe(true);
   });
+
+  // The exact encodings. These are the lab's own instructions and nothing else
+  // can be compared against them, because no other assembler has them, so a
+  // change to a byte is invisible everywhere else: the tests above check the
+  // behaviour, and these check that the behaviour is still reachable.
+  // The ModR/M byte comes before the immediate, as it does on the hardware: the
+  // escape code selects the instruction and the operand register is encoded in
+  // the ModR/M, with the port last.
+  it.each([
+    ["OUT AL", [0x0f, 0x00, 0xc0]],
+    ["OUTC AL", [0x0f, 0x01, 0xc0]],
+    ["OUT AX", [0x0f, 0x05, 0xc0]],
+    ["OUTC AX", [0x0f, 0x06, 0xc0]],
+    ["MOD BX", [0x0f, 0x03, 0xc3]],
+    ["MOD BL", [0x0f, 0x04, 0xc3]],
+    ["OUTP 10h, AL", [0x0f, 0x02, 0xc0, 0x10]],
+    ["OUTP 10h, BX", [0x0f, 0x07, 0xc3, 0x10]],
+    ["IN BL, 10h", [0x0f, 0x08, 0xc3, 0x10]],
+    ["IN BX, 10h", [0x0f, 0x09, 0xc3, 0x10]],
+  ])("encodes %s to the documented bytes", (source, bytes) => {
+    const result = assemble(source, { origin: 0 });
+    expect(result.errors.map((d) => d.message)).toEqual([]);
+    expect([...result.image]).toEqual(bytes);
+  });
+
+  it("puts every extension in the private 0F escape", () => {
+    // 0F is not a prefix on the 8086, so an extension can never be mistaken for
+    // a real instruction -- which is the whole reason the lab can add
+    // instructions without taking any away. Checking it per entry means a new
+    // extension cannot be added outside that space by accident.
+    for (const def of INSTRUCTION_TABLE) {
+      if (def.ext === undefined) continue;
+      expect(def.bytes[0], `${def.mnem} escapes with ${hex(def.bytes[0])}`).toBe(0x0f);
+    }
+  });
+
+  it("gives every extension its own escape code", () => {
+    // Two mnemonics sharing a code would mean the table's `ext` field, which is
+    // what a debugger and a disassembler read, could not say which one ran.
+    const codes = new Map<number, string>();
+    for (const def of INSTRUCTION_TABLE) {
+      if (def.ext === undefined) continue;
+      const existing = codes.get(def.ext);
+      if (existing !== undefined) {
+        throw new Error(`extension code ${hex(def.ext)} is used by both ${existing} and ${def.mnem}`);
+      }
+      codes.set(def.ext, def.mnem);
+    }
+    expect(codes.size).toBe(10);
+  });
+
+  it("gives every extension a code of its own as well as a mnemonic", () => {
+    // MOD has two codes because it has two widths, and IN has two for the same
+    // reason. What must not happen is a code that names a mnemonic the table
+    // does not otherwise spell, because then the escape byte and the table
+    // disagree about what exists.
+    const byCode = new Map(INSTRUCTION_TABLE.filter((d) => d.ext !== undefined).map((d) => [d.ext!, d.mnem]));
+    expect(new Set(byCode.values())).toEqual(new Set(["OUT", "OUTC", "OUTP", "MOD", "IN"]));
+  });
 });
 
 describe("interrupts", () => {
@@ -865,6 +1519,105 @@ describe("interrupts", () => {
   it("reports an interrupt it has no policy for", () => {
     const h = com("INT 3\nMOV AX, 0BADh").run();
     expect(h.cpu.state.halted).toBe(true);
+  });
+
+  it("names the service it does not implement", () => {
+    // An unsupported service has to be visible. Halting is right -- the CPU has
+    // no vector table to hand over to -- but a program that halted for no stated
+    // reason is indistinguishable from one that finished, and the difference
+    // between the two is exactly what a student is being asked to find.
+    const h = com("MOV AH, 0Bh\nINT 21h").run();
+    expect(h.cpu.state.halted).toBe(true);
+    expect(h.cpu.state.error).toBe("unsupported INT 21h service bh");
+  });
+
+  it("puts the next input character in AL for AH=01", () => {
+    // AH=01 and AH=07 read one character and leave it in AL. Two calls consume
+    // two characters, and AL ends up holding the second -- which is the only
+    // thing that distinguishes a queue from a single slot.
+    const h = com("MOV AH, 1\nINT 21h\nINT 21h\nHLT", {}, { inputValues: [0x41, 0x42] }).run();
+    expect(AL(h)).toBe(0x42);
+  });
+
+  it("returns AL=0 from AH=01 when there is no input", () => {
+    // Real DOS blocks. A program in the lab must not hang the browser, so the
+    // queue runs dry and the service returns whatever AL already held, which is
+    // zero for a program that did not set it. Nothing is invented.
+    const h = com("MOV AX, 0\nMOV AH, 1\nINT 21h\nHLT", {}, { inputValues: [] }).run();
+    expect(AL(h)).toBe(0);
+    expect(h.cpu.state.error).toBe(null);
+  });
+
+  it("reads a line into a DOS buffer for AH=0Ah", () => {
+    // The buffer layout is the DOS one: capacity, count, then the characters
+    // and a trailing CR. The count excludes the CR, which is the detail a
+    // program printing `count` characters depends on.
+    // The program owns the buffer and sets the capacity before it calls, which
+    // is what DOS expects: the service fills a buffer the program has already
+    // described.
+    const h = seeded(
+      "MOV DX, 200h\nMOV AH, 0Ah\nINT 21h\nHLT",
+      { 0x200: 16 },
+      {},
+      { inputValues: [0x68, 0x69, 0x0d] },
+    );
+    expect(h.memory.read8(0, 0x200)).toBe(16);
+    expect(h.memory.read8(0, 0x201)).toBe(2);
+    expect([0, 1, 2, 3].map((n) => h.memory.read8(0, 0x202 + n))).toEqual([0x68, 0x69, 0x0d, 0]);
+    expect(AL(h)).toBe(0);
+  });
+
+  it("leaves the characters that did not fit for the next read", () => {
+    // The capacity covers the CR, so a buffer of 3 takes two characters and
+    // stops. The character that would have been third stays in the queue, which
+    // is what lets a program read a second line instead of losing one.
+    const h = seeded(
+      "MOV DX, 200h\nMOV AH, 0Ah\nINT 21h\nHLT",
+      { 0x200: 3 },
+      {},
+      { inputValues: [0x61, 0x62, 0x63, 0x0d] },
+    );
+    expect(h.memory.read8(0, 0x201)).toBe(2);
+    expect([0, 1].map((n) => h.memory.read8(0, 0x202 + n))).toEqual([0x61, 0x62]);
+    // Nothing was written past the two characters, so the CR slot is untouched.
+    expect(h.memory.read8(0, 0x204)).toBe(0);
+  });
+
+  it("returns an empty line for AH=0Ah with no input", () => {
+    // Not an error and not a hang: the count says zero and the characters are
+    // left alone, so a program that reads a count first behaves.
+    const h = seeded("MOV DX, 200h\nMOV AH, 0Ah\nINT 21h\nHLT", { 0x200: 16 }, {}, { inputValues: [] });
+    expect(h.memory.read8(0, 0x201)).toBe(0);
+    expect(AL(h)).toBe(0);
+    expect(h.cpu.state.error).toBe(null);
+  });
+
+  it("does not write a line buffer too small to hold a CR", () => {
+    // A capacity below 2 cannot hold a character and its terminator. DOS refuses
+    // the call, and so does this: nothing is written and no character is eaten.
+    const h = seeded("MOV DX, 200h\nMOV AH, 0Ah\nINT 21h\nHLT", { 0x200: 1 }, {}, { inputValues: [0x61, 0x0d] });
+    // The capacity byte is the program's own and is left alone; what must not
+    // happen is a count or a stored character.
+    expect(h.memory.read8(0, 0x200)).toBe(1);
+    expect(h.memory.read8(0, 0x201)).toBe(0);
+    expect(h.memory.read8(0, 0x202)).toBe(0);
+  });
+
+  it("stops a scan with no terminator instead of looping", () => {
+    // 64 KB with no '$'. Without a bound the scan wraps to its own start,
+    // re-reads the same bytes, and appends to the output forever.
+    const h = com("MOV DX, 0\nMOV AH, 9\nINT 21h\nHLT").run();
+    expect(h.cpu.state.halted).toBe(true);
+    expect(h.cpu.state.error).toBe(null);
+    expect(h.cpu.output.length).toBeLessThanOrEqual(0x10000);
+  });
+
+  it("stops at the instruction after the one that halts", () => {
+    // INT 20h and the exit service both halt, and neither may run the next
+    // instruction. AX staying zero is the whole check: 0BADh would mean the
+    // program carried on past the halt.
+    const h = com("INT 20h\nMOV AX, 0BADh").run();
+    expect(AX(h)).toBe(0);
   });
 });
 
