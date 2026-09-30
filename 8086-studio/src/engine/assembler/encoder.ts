@@ -325,7 +325,7 @@ const SHIFT_MNEMONICS = new Set(["SHL", "SAL", "SHR", "SAR", "ROL", "ROR", "RCL"
 // Mnemonics that are 80186 are rejected earlier, in `assemble.ts`, because
 // they fail at the mnemonic before any operand is parsed. What is left here are
 // the rejections that depend on the operands: a count that is neither 1 nor CL,
-// an immediate to PUSH, an immediate to RETF, and the three-operand IMUL.
+// an immediate to PUSH, and the three-operand IMUL.
 
 /** True when the operand is a count, i.e. a number that is not 1. */
 function isCountOtherThanOne(operand: Operand | undefined): boolean {
@@ -344,9 +344,6 @@ function notOn8086(request: EncodeRequest): string | undefined {
   }
   if (mnem === "PUSH" && isCountOtherThanOne(request.operands[0])) {
     return "PUSH with an immediate is an 80186 instruction; on an 8086 the operand must be a register or memory";
-  }
-  if (mnem === "RETF" && request.operands.length > 0) {
-    return "RETF with an immediate is an 80186 instruction; plain RETF is the 8086 form";
   }
   if (mnem === "IMUL" && request.operands.length > 2) {
     return "the three-operand IMUL is an 80186 instruction; on an 8086 IMUL takes one operand";

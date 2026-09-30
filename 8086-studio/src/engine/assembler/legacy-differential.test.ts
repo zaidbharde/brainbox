@@ -88,10 +88,17 @@ const CORPUS: readonly string[] = [
  * `isa-boundary.test.ts` is where that is checked. They are listed here too
  * because the legacy does not refuse all of them, and the ones it accepts are
  * what `EXCEPTIONS` has to account for.
+ *
+ * `RETF 4` used to be on this list. It is 8086 -- the release count on a far
+ * return -- so the list was wrong and this engine used to refuse it; see
+ * `src/engine/isa/return-forms.test.ts`. It is gone from here rather than moved,
+ * because this file only records the *legacy assembles what this engine refuses*
+ * direction, and that is the other way round: the legacy has no `RETF` at all,
+ * so `RETF 4` and `RETF` are both legacy refusals rather than exceptions.
  */
 const NOT_8086_FORMS: readonly string[] = [
   "SHL AL, 2", "SHR AX, 3", "ROL BX, 4", "SAR AL, 5", "RCL AX, 2", "RCR BX, 3",
-  "ENTER", "LEAVE", "RETF 4", "PUSHA", "POPA",
+  "ENTER", "LEAVE", "PUSHA", "POPA",
   "INSB", "INSW", "OUTSB", "OUTSW",
   "PUSH 100h", "IMUL AX, BX, 3", "IMUL BX, 3", "BOUND AX, 0100h", "ARPL AX, BX",
 ];
@@ -102,9 +109,8 @@ const NOT_8086_FORMS: readonly string[] = [
  *
  * It is short, and deliberately so. The legacy's own instruction table is
  * narrower than the ISA it runs on -- it has no ENTER, LEAVE, PUSHA, BOUND, the
- * string port I/O, the three-operand IMUL, or RETF with an immediate, and
- * rejects them at validation. So of the twenty-odd non-8086 forms below, only
- * four ever reach the encoder here.
+ * string port I/O or the three-operand IMUL, and rejects them at validation. So
+ * of the non-8086 forms below, only four ever reach the encoder here.
  *
  * Each needs a reason, and the tests below check the list against what the two
  * engines actually do, so an entry cannot go stale and a new disagreement cannot

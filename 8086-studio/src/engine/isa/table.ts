@@ -543,9 +543,13 @@ function buildTable(): InsnDef[] {
     { mnem: "LDS", ops: ["r16", "rm16"], bytes: [0xc5], modrm: { reg: 0, rm: 1, mod3Forbidden: true }, flags: [] },
     { mnem: "MOV", ops: ["rm8", "imm8"], bytes: [0xc6], modrm: { digit: 0, rm: 0 }, imm: { slot: 1, size: 8 }, flags: [] },
     { mnem: "MOV", ops: ["rm16", "imm16"], bytes: [0xc7], modrm: { digit: 0, rm: 0 }, imm: { slot: 1, size: 16 }, flags: [] },
-    // 0xC8 ENTER, 0xC9 LEAVE and 0xCA RETF imm16 are all 80186. They are not
-    // in the table, and the `imm2` field that existed only for ENTER goes with
-    // them. Plain `RETF` is 0xCB and *is* 8086, which is why it is still here.
+    // 0xC8 ENTER and 0xC9 LEAVE are 80186, so they are not in the table, and
+    // neither is the `imm2` field that existed only for ENTER. 0xCA is a
+    // different case and belongs here: `RETF imm16` is 8086, the sibling of
+    // the plain `RETF` at 0xCB below, and it was left out on the belief that a
+    // far return could only take an immediate from the 80186 onwards. It could
+    // not. See src/engine/isa/return-forms.test.ts.
+    { mnem: "RETF", ops: ["imm16"], bytes: [0xca], imm: { slot: 0, size: 16 }, flags: [] },
     { mnem: "RETF", ops: ["none"], bytes: [0xcb], flags: [] },
     { mnem: "INT3", ops: ["none"], bytes: [0xcc], flags: [], note: "INT 3" },
     { mnem: "INT", ops: ["imm8"], bytes: [0xcd], imm: { slot: 0, size: 8 }, flags: [] },

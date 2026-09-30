@@ -43,6 +43,10 @@ const IS_8086 = [
   "PUSHF", "POPF", "SAHF", "LAHF",
   // control transfer
   "JMP 0100h", "JMP WORD PTR [0100h]", "CALL 0100h", "RET", "RETF",
+  // The immediate is a release count for the caller's arguments, and both the
+  // near and the far form of it are 8086. `CA` was wrongly listed below as
+  // 80186; `src/engine/isa/return-forms.test.ts` is the file that says why.
+  "RET 4", "RETF 4",
   "JE 2", "JNE 2", "JL 2", "JLE 2", "JG 2", "JGE 2", "JB 2", "JBE 2",
   "JO 2", "JNO 2", "JS 2", "JP 2", "JL 2",
   "LOOP 2", "LOOPE 2", "LOOPNE 2", "LOOPZ 2", "LOOPNZ 2", "JCXZ 2",
@@ -73,7 +77,6 @@ const IS_8086 = [
  *  - `C0`/`C1`: shift and rotate by an 8-bit immediate. The 8086 has `D0`/`D1`
  *    (by one) and `D2`/`D3` (by CL) and nothing else
  *  - `C8`/`C9`: ENTER and LEAVE
- *  - `CA`: RETF with an immediate. Plain `RETF` is `CB` and is 8086
  */
 const NOT_8086 = [
   "PUSHA", "POPA", "BOUND AX, 0100h", "ARPL AX, BX",
@@ -81,7 +84,7 @@ const NOT_8086 = [
   "INSB", "INSW", "OUTSB", "OUTSW", "INS BYTE PTR ES:[DI], DX", "OUTS",
   "ROL AL, 2", "ROR AL, 3", "RCL BX, 4", "RCR BX, 5",
   "SHL AL, 2", "SHR AX, 3", "SHL BX, 4", "SAR AL, 5", "SAL AL, 2",
-  "ENTER 8, 0", "LEAVE", "RETF 4",
+  "ENTER 8, 0", "LEAVE",
 ];
 
 function accepts(source: string): boolean {
@@ -133,7 +136,7 @@ describe("the decoder does not claim opcodes the 8086 left unassigned", () => {
     [0x6b, "IMUL r,rm,imm8"],
     [0x6c, "INSB"], [0x6d, "INSW"], [0x6e, "OUTSB"], [0x6f, "OUTSW"],
     [0xc0, "ROL r/m8, imm8"], [0xc1, "ROL r/m16, imm8"],
-    [0xc8, "ENTER"], [0xc9, "LEAVE"], [0xca, "RETF imm16"],
+    [0xc8, "ENTER"], [0xc9, "LEAVE"],
   ])("%s is not decoded as %s", (opcode, name) => {
     const result = decode(Uint8Array.of(opcode as number, 0, 0, 0, 0, 0));
     expect(
@@ -142,9 +145,13 @@ describe("the decoder does not claim opcodes the 8086 left unassigned", () => {
     ).toBe(false);
   });
 
-  it("still decodes the 8086 instruction that shares the 0xCA/0xCB pair", () => {
-    // `RETF` is 0xCB and is 8086. Rejecting the immediate form must not take
-    // the plain one with it.
+  it("decodes both halves of the 0xCA/0xCB pair, which are both 8086", () => {
+    // Both used to be treated as postdating the 8086, and both are in it:
+    // `RETF` is `CB`, `RETF imm16` is `CA` with a release count. The lengths
+    // differ, which is the thing a disassembler needs.
     expect(decode(Uint8Array.of(0xcb)).mnem).toBe("RETF");
+    expect(decode(Uint8Array.of(0xcb)).length).toBe(1);
+    expect(decode(Uint8Array.of(0xca, 0x04, 0x00)).mnem).toBe("RETF");
+    expect(decode(Uint8Array.of(0xca, 0x04, 0x00)).length).toBe(3);
   });
 });
