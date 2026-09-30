@@ -20,6 +20,28 @@ interface RegisterDisplayProps {
    * unknown, and the two refusals agree.
    */
   onChangeRegister?: (name: string, value: number) => void;
+  /**
+   * IP as an address, when that is not the same as the register.
+   *
+   * The new engine keeps IP as an offset inside the code segment, so for a
+   * program whose code segment is not at 0000h the register is not the address a
+   * person reads. The address is what every other number in the lab is in -- the
+   * memory panel, the hex dump, the disassembly -- so the field shows that and
+   * commits it back, and the caller resolves it with `setIpAddress`.
+   *
+   * Omitted means "IP is already an address", which is the legacy's case.
+   */
+  ipAddress?: number;
+  /**
+   * The address before the last instruction, for the same reason.
+   *
+   * Separate because there is nothing to derive it from: the panel is handed
+   * registers, and on this engine the registers hold the offset, so the previous
+   * address is not in anything it was given. A caller that has it passes it; a
+   * caller that does not simply sees no change marker on the IP row, rather than
+   * a wrong one.
+   */
+  previousIpAddress?: number;
   /** While the engine is running, fields are shown but not editable. */
   readOnly?: boolean;
 }
@@ -30,12 +52,26 @@ export function RegisterDisplay({
   compact = false,
   showAllRegisters = false,
   onChangeRegister,
+  ipAddress,
+  previousIpAddress,
   readOnly = false,
 }: RegisterDisplayProps) {
   const editable = onChangeRegister !== undefined && !readOnly;
 
   const formatHex = (value: number) => value.toString(16).toUpperCase().padStart(4, '0');
   const hasChanged = (reg: keyof Registers) => !!(previousRegisters && registers[reg] !== previousRegisters[reg]);
+
+  /**
+   * What the IP row shows, and what it edits.
+   *
+   * The address when the caller knows the segment is somewhere other than zero,
+   * the register otherwise. A change is flagged only where a previous value is
+   * actually available, which for the address form means the caller supplied it.
+   */
+  const shownIp = ipAddress ?? registers.IP;
+  const ipChanged = ipAddress === undefined
+    ? hasChanged('IP')
+    : previousRegisters !== undefined && previousIpAddress !== shownIp;
 
   const generalRegs: (keyof Registers)[] = ['AX', 'BX', 'CX', 'DX'];
   const indexRegs: (keyof Registers)[] = ['SI', 'DI', 'SP', 'BP'];
@@ -116,15 +152,15 @@ export function RegisterDisplay({
         <div className="flex items-center justify-between">
           <span className="text-xs text-gray-500 uppercase tracking-wider">Instruction Pointer</span>
           <motion.span
-            key={registers.IP}
-            initial={{ scale: 1.2, color: '#f0b45b' }}
-            animate={{ scale: 1, color: '#45d1a3' }}
+            key={shownIp}
+            initial={ipChanged ? { scale: 1.2, color: '#f0b45b' } : false}
+            animate={{ scale: 1, color: ipChanged ? '#f0b45b' : '#45d1a3' }}
             className="font-mono text-lg font-bold text-[#45d1a3]"
           >
             {editable ? (
-              <RegisterField name="IP" value={registers.IP} onCommit={(value) => onChangeRegister!('IP', value)} />
+              <RegisterField name="IP" value={shownIp} onCommit={(value) => onChangeRegister!('IP', value)} />
             ) : (
-              formatHex(registers.IP)
+              formatHex(shownIp)
             )}
           </motion.span>
         </div>

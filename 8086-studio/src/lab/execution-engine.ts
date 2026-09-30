@@ -120,6 +120,33 @@ export interface DebugSession {
    */
   setRegister(name: string, value: number): boolean;
   /**
+   * The instruction pointer as one address, for the register panel to show.
+   *
+   * `setRegister('IP', n)` does not mean the same thing on both engines, and
+   * `n` is not the same number. The legacy's IP is a flat address -- it indexes
+   * its parsed instruction list -- so it is reported unchanged. The new engine's
+   * IP is an offset inside the code segment, so the address is `CS * 16 + IP`.
+   * The two agree only while CS is 0000h, which is true of a .COM program and
+   * false of anything that moved its code segment.
+   *
+   * This is the address the Memory panel and the hex dump are already printing,
+   * so it is the one a person can copy. The panel must show this and not the raw
+   * register, or the field would display a number that `setIpAddress` does not
+   * take.
+   */
+  ipAddress(): number;
+  /**
+   * Move the program to an address, the inverse of `ipAddress`.
+   *
+   * Takes the same address the panel shows, not a raw register value: an address
+   * is resolved against the segment it belongs to, and a difference that lands
+   * outside the segment wraps the way the 8086 wraps rather than being refused.
+   *
+   * Every sixteen-bit number is a legal destination, so unlike `setRegister`
+   * there is no name to reject and nothing to return.
+   */
+  setIpAddress(address: number): void;
+  /**
    * The bytes of one segment, for the memory and stack panels to draw.
    *
    * Not a detail: `state.memory` is a single flat image and the two engines do
@@ -340,6 +367,22 @@ export class LegacySession implements DebugSession {
     if (!(WRITABLE_REGISTERS as readonly string[]).includes(name)) return false;
     this.current = { ...this.current, registers: { ...this.current.registers, [name]: value & 0xffff } };
     return true;
+  }
+
+  /**
+   * The legacy's IP is already the address, because the legacy has only one of
+   * them: its instructions are a list at a flat address space and IP indexes it.
+   * So this is the register, unchanged, and `setIpAddress` is the same write.
+   *
+   * The new engine needs the segment added and the panel needs to know; see
+   * `execution-engine.test.ts` for the round trip that pins the two together.
+   */
+  ipAddress(): number {
+    return this.current.registers.IP;
+  }
+
+  setIpAddress(address: number): void {
+    this.setRegister('IP', address);
   }
 
   /**

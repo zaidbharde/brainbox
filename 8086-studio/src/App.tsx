@@ -845,7 +845,16 @@ export function App() {
     if (!debugSession || isStepping || debugState.halted || debugSnapshots.length === 0) {
       return;
     }
-    if (!debugSession.setRegister(name, value)) {
+    // The IP field is in addresses, because that is what the memory panel and the
+    // hex dump print and what a person copies out of them. On the legacy those
+    // are the same number; on the new engine the register is an offset inside the
+    // code segment, so the address is resolved against CS before it is written.
+    // Routing this through the session rather than the register map is what keeps
+    // the timeline consistent: the snapshot below is rebuilt from the session's
+    // own state, so a rewind lands where the edit did.
+    if (name === 'IP') {
+      debugSession.setIpAddress(value);
+    } else if (!debugSession.setRegister(name, value)) {
       return;
     }
 
@@ -862,7 +871,11 @@ export function App() {
     setTimelineCursor(nextSnapshots.length - 1);
     setSelectedInstructionIndex(nextState.registers.IP);
     setChangedMemoryWords([]);
-    setDebugStatus(`${name} set to 0x${(value & 0xffff).toString(16).toUpperCase().padStart(4, '0')}.`);
+    // Reported from the session rather than from what was typed, because the two
+    // are not the same number for IP: an address resolves to an offset, and an
+    // address below the segment wraps to a value the panel never showed.
+    const landed = name === 'IP' ? debugSession.ipAddress() : value;
+    setDebugStatus(`${name} set to 0x${landed.toString(16).toUpperCase().padStart(4, '0')}.`);
   }, [debugSession, debugSnapshots, debugState.halted, isStepping, timelineCursor]);
 
   const debugStepBack = useCallback(() => {
@@ -2423,7 +2436,11 @@ print "Hello!"`}</pre>
                           <span className="text-2xl font-bold text-[#f0b45b]">{currentInstruction.opcode}</span>
                           <span className="text-lg text-gray-300 ml-3">{currentInstruction.operands.join(', ')}</span>
                         </div>
-                        <p className="text-xs text-gray-500">IP: {formatHex(currentIp)}</p>
+                        {/* The address, not the raw register: on the new engine IP
+                            is an offset inside the code segment, and every other
+                            number in this panel -- the disassembly, the memory
+                            view, the register field -- is an address. */}
+                        <p className="text-xs text-gray-500">IP: {formatHex(debugSession.ipAddress())}</p>
                       </div>
                     ) : (
                       <span className="text-gray-500">End of program</span>
@@ -2459,6 +2476,10 @@ print "Hello!"`}</pre>
                       previousRegisters={previousDebugState?.registers}
                       showAllRegisters={true}
                       onChangeRegister={writeDebugRegister}
+                      ipAddress={debugSession.ipAddress()}
+                      previousIpAddress={previousDebugState
+                        ? (previousDebugState.registers.CS << 4) + previousDebugState.registers.IP
+                        : undefined}
                       readOnly={isStepping || debugState.halted}
                     />
                   </CardContent>

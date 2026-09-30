@@ -969,6 +969,153 @@ describe('setRegister', () => {
 });
 
 /**
+ * The instruction pointer as an address, which is what the register panel shows.
+ *
+ * `setRegister('IP', n)` does not mean the same thing on the two engines, and
+ * neither is wrong on its own. The legacy's IP *is* a flat address: it indexes
+ * its parsed instruction list. The new engine's IP is an offset inside the code
+ * segment, so the address of the same instruction is `CS * 16 + IP`.
+ *
+ * Those two numbers coincide while CS is 0000h, which every .COM program and
+ * every plain `MOV`/`.DATA` program is -- and a bug that only shows up for
+ * programs with a code segment at a non-zero base is a bug nobody finds by hand.
+ * `SEGMENTED` is that program, and it is ordinary source: declaring the data
+ * segment first puts CODE second, and MASM-style packing gives it the base 0010h.
+ * Its first instruction is at IP 0000h and at address 0100h, and those are the
+ * numbers the Memory panel and the register panel were each showing.
+ *
+ * So a person copying 0100h out of the memory view and typing it into the IP
+ * field set IP to 0100h -- an offset 256 bytes past the start of a segment whose
+ * code is 256 bytes long, so the step went to whatever followed. `ipAddress` and
+ * `setIpAddress` are the pair that fixes it, and what they have to guarantee is
+ * the round trip: whatever `ipAddress` reports, feeding that number back to
+ * `setIpAddress` lands on the same instruction.
+ */
+describe('the instruction pointer as an address', () => {
+  const THREE = 'MOV AX, 1\nMOV BX, 2\nHLT';
+
+  /**
+   * CODE packed to 0010h, so its first instruction is offset 0 at address 0100h.
+   *
+   * Segment order is the whole trick: the assembler packs declared segments in
+   * source order on paragraph boundaries, so DATA first means CODE starts at
+   * 0010h rather than 0000h.
+   */
+  const SEGMENTED = [
+    'DATA SEGMENT',
+    '  DW 0',
+    'DATA ENDS',
+    'CODE SEGMENT',
+    'start:',
+    '  MOV AX, 1',
+    '  MOV BX, 2',
+    '  HLT',
+    'CODE ENDS',
+    'END start',
+  ].join('\n');
+
+  /** The program whose CS is not zero, and so whose IP is not an address. */
+  const offsetProgram = (engine: EngineId) => (engine === 'v2' ? SEGMENTED : THREE);
+
+  it('is the plain register on the legacy, which has no other address space', () => {
+    const subject = session('legacy', THREE);
+    expect(subject.ipAddress()).toBe(subject.state.registers.IP);
+    // And it still agrees after a move, so the panel cannot show one number and
+    // step with another.
+    subject.setRegister('IP', 1);
+    expect(subject.ipAddress()).toBe(1);
+  });
+
+  it('is CS * 16 + IP on the new engine, and is not the IP register', () => {
+    const subject = session('v2', SEGMENTED);
+    const { CS, IP } = subject.state.registers;
+    expect(CS, 'the program must have a non-zero code base for this to mean anything').not.toBe(0);
+    expect(subject.ipAddress()).toBe((CS << 4) + IP);
+    expect(subject.ipAddress(), 'the address is what the memory view prints').toBe(0x100);
+    expect(subject.state.registers.IP, 'and it is not the offset the CPU holds').toBe(0);
+  });
+
+  it('round-trips: the address it shows is the address it accepts', () => {
+    // The whole reason for the pair. Read the address, type it back, and the
+    // program has not moved -- on both engines and for every instruction.
+    for (const engine of ENGINES) {
+      const subject = session(engine, offsetProgram(engine));
+      for (const _ of subject.instructionAddresses()) {
+        const before = subject.ipAddress();
+        subject.setIpAddress(subject.ipAddress());
+        expect(subject.ipAddress(), engine).toBe(before);
+      }
+    }
+  });
+
+  it('lands on the instruction its address names, on both engines', () => {
+    // Not the round trip again -- this is the behaviour the panel depends on.
+    // Type the *address* of the second instruction, the number printed in the
+    // memory view, and the second instruction is what runs next.
+    for (const engine of ENGINES) {
+      const subject = session(engine, offsetProgram(engine));
+      const second = subject.instructionAddresses()[1];
+      subject.setIpAddress(subject.ipAddress() + (second - subject.instructionAddresses()[0]));
+      const after = subject.step(1, 0).nextState;
+      expect(after.registers.BX, `${engine} must have run the second instruction`).toBe(2);
+      expect(after.registers.AX, `${engine} must have skipped the first`).not.toBe(1);
+    }
+  });
+
+  it('takes the address where the raw register took the offset, which is the fix', () => {
+    // The specific thing that was broken. On a program with CS at 0010h, the
+    // address of the second instruction is 0103h and the offset is 0003h, so
+    // writing the address into the raw IP register lands 256 bytes past the end
+    // of the program. The address form has to be the one that works.
+    const byAddress = session('v2', SEGMENTED);
+    const byOffset = session('v2', SEGMENTED);
+    const second = byAddress.instructionAddresses()[1];
+    const address = byAddress.ipAddress() + second;
+
+    byAddress.setIpAddress(address);
+    byOffset.setRegister('IP', address);
+
+    expect(byAddress.state.registers.IP, 'the address resolves to the offset').toBe(second);
+    expect(byOffset.state.registers.IP, 'and the raw register does not').toBe(address);
+    expect(byAddress.step(1, 0).nextState.registers.BX).toBe(2);
+  });
+
+  it('is the legacy behaviour of setRegister on the legacy', () => {
+    // The legacy is the default and must not move. If this fails, the new pair
+    // has changed what a plain register write means for the engine everybody
+    // uses.
+    const viaAddress = session('legacy', THREE);
+    const viaRegister = session('legacy', THREE);
+    viaAddress.setIpAddress(1);
+    viaRegister.setRegister('IP', 1);
+    expect(viaAddress.state.registers).toEqual(viaRegister.state.registers);
+  });
+
+  it('wraps an address that is below the segment, rather than refusing it', () => {
+    // IP is sixteen bits whatever CS holds, so an address one byte below the
+    // segment start names a real place in it and the machine goes there. Refusing
+    // would be a rule the 8086 does not have.
+    const subject = session('v2', SEGMENTED);
+    expect(subject.ipAddress()).toBe(0x100);
+    subject.setIpAddress(0xff);
+    expect(subject.state.registers.IP).toBe(0xffff);
+    expect(subject.ipAddress(), 'the address reads back as the one that was asked for').toBe(0x100ff);
+  });
+
+  it('refuses nothing about the value: every sixteen-bit number is an address', () => {
+    // No name to reject and no value to reject either, so there is no failure
+    // mode to report. Asserted so a future guard cannot quietly start refusing
+    // numbers the field can type.
+    const subject = session('v2', SEGMENTED);
+    const base = subject.state.registers.CS << 4;
+    for (const value of [base, base + 0xffff, base - 1, base - 0x10000, base + 0x12345]) {
+      subject.setIpAddress(value);
+      expect(subject.state.registers.IP, `IP after ${value.toString(16)}`).toBe((value - base) & 0xffff);
+    }
+  });
+});
+
+/**
  * Reading a segment, because the memory and stack panels index one.
  *
  * `state.memory` cannot serve both panels, and the reason is not a detail of the

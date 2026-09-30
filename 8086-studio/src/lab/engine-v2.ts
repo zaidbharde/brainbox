@@ -328,6 +328,33 @@ export class V2Session {
     return true;
   }
 
+  /**
+   * The address of the instruction about to run, which is not the IP register.
+   *
+   * This engine keeps IP as an offset inside the code segment and CS as the
+   * segment's base, the way the 8086 does -- so the address the Memory panel
+   * prints, the address a hex dump prints, and the address a person would type
+   * into the IP field is `CS * 16 + IP`. For a .COM program CS is 0000h and the
+   * two numbers coincide, which is why this was not obvious; move the code
+   * segment and they part company.
+   */
+  ipAddress(): number {
+    const { CS, IP } = this.state.registers;
+    return physicalAddress(CS, IP);
+  }
+
+  /**
+   * Move to an address rather than to an offset, resolving it against CS.
+   *
+   * The subtraction is masked rather than the address refused: IP is sixteen bits
+   * whatever CS holds, so an address one segment lower names a real place in this
+   * segment and the 8086 goes there. `setRegister('IP', ...)` still writes the raw
+   * register, for a caller that means the offset.
+   */
+  setIpAddress(address: number): void {
+    this.cpu.writeReg16('IP', address - physicalAddress(this.state.registers.CS, 0));
+  }
+
   sourceMapEntries(): readonly SourceMapEntry[] {
     // The segment comes off: the panel is drawing one source file against one
     // code segment, and an entry tagged with the segment it came from would be
