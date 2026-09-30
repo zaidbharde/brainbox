@@ -64,6 +64,7 @@ import {
 } from '@/lab/types';
 import { buildInstructionInspectorData } from '@/lab/instruction-inspector';
 import { SEGMENT_NAMES, dataSegmentStart, runningSegment, segmentBaseFor } from '@/lab/segments';
+import { debugControlAvailability } from '@/lab/debug-controls';
 import { buildExecutionAnalytics } from '@/lab/analytics';
 import { buildGuidedLearningContent } from '@/lab/guided-learning';
 import { evaluateWatchExpressions } from '@/lab/watch';
@@ -865,13 +866,21 @@ export function App() {
   }, [debugSession, debugSnapshots, debugState.halted, isStepping, timelineCursor]);
 
   const debugStepBack = useCallback(() => {
-    if (timelineCursor <= 0) {
+    // Guarded by the same rule as the buttons, so a stale click or a keyboard
+    // activation cannot rewind past a step that is still in flight.
+    if (isStepping || timelineCursor <= 0) {
       return;
     }
     seekTimelineToIndex(timelineCursor - 1);
-  }, [seekTimelineToIndex, timelineCursor]);
+  }, [isStepping, seekTimelineToIndex, timelineCursor]);
 
   const debugReset = useCallback(() => {
+    // Reset writes thirteen pieces of state. A step in flight is about to write
+    // its own, and which of the two lands last is up to the event loop -- so this
+    // refuses instead, and the toolbar disables the button for the same reason.
+    if (isStepping) {
+      return;
+    }
     // The state the session started in, captured when the program was loaded.
     const initialState = debugInitialState ?? createInitialState();
     const initialPerf = createInitialPerformanceMetrics();
@@ -890,7 +899,7 @@ export function App() {
     setSnapshotCompareAId(null);
     setSnapshotCompareBId(null);
     setDebugStatus('CPU state reset.');
-  }, [debugInitialState]);
+  }, [debugInitialState, isStepping]);
 
   const debugRunToEnd = useCallback(() => {
     if (!debugSession || debugState.halted || isStepping || debugSnapshots.length === 0) {
@@ -1496,6 +1505,12 @@ export function App() {
   }, [sourceCode, sourceLanguage]);
 
   const handleRun = useCallback(() => {
+    // A pending Compile is 300ms of deliberate delay with the source captured
+    // already, so running now would execute code the user has since changed and
+    // the Compile would then report a different program than the one that ran.
+    if (isCompiling) {
+      return;
+    }
     setShowErrorAssistant(false);
     const selectedResult = compile(sourceCode, sourceLanguage);
     const detectedLanguage = detectFrontendLanguage(sourceCode);
@@ -1576,9 +1591,12 @@ export function App() {
       setRunOutput(`Compilation failed:\n\n${errorStr}`);
       setEditorTab('output');
     }
-  }, [sourceCode, sourceLanguage]);
+  }, [isCompiling, sourceCode, sourceLanguage]);
 
   const handleDebug = useCallback(() => {
+    if (isCompiling) {
+      return;
+    }
     const selectedResult = compile(sourceCode, sourceLanguage);
     const detectedLanguage = detectFrontendLanguage(sourceCode);
     const result = !selectedResult.success && detectedLanguage !== sourceLanguage
@@ -1600,7 +1618,7 @@ export function App() {
     if (result.success && result.program) {
       initializeDebugSession(result.program, 'editor');
     }
-  }, [initializeDebugSession, sourceCode, sourceLanguage]);
+  }, [initializeDebugSession, isCompiling, sourceCode, sourceLanguage]);
 
   // Home View
   if (viewMode === 'home') {
@@ -1808,6 +1826,7 @@ export function App() {
               variant="success" 
               size="sm" 
               onClick={handleRun}
+              disabled={isCompiling}
               icon={<Play className="w-4 h-4" />}
             >
               Run
@@ -1816,6 +1835,7 @@ export function App() {
               variant="secondary" 
               size="sm" 
               onClick={handleDebug}
+              disabled={isCompiling}
               icon={<Bug className="w-4 h-4" />}
             >
               Debug
@@ -2194,7 +2214,11 @@ print "Hello!"`}</pre>
     const isRewound = timelineCursor < timelineMax;
     const traceForDisplay = visibleTrace;
     const sortedBreakpoints = Array.from(breakpoints).sort((a, b) => a - b);
-    const canStep = !debugState.halted && !isStepping;
+    const controls = debugControlAvailability({
+      halted: debugState.halted,
+      stepping: isStepping,
+      timelineCursor,
+    });
     
     return (
       <div className="app-shell min-h-screen flex flex-col">
@@ -2228,6 +2252,7 @@ print "Hello!"`}</pre>
               variant="secondary" 
               size="sm" 
               onClick={debugReset}
+              disabled={!controls.reset}
               icon={<RotateCcw className="w-4 h-4" />}
             >
               Reset
@@ -2236,7 +2261,7 @@ print "Hello!"`}</pre>
               variant="secondary" 
               size="sm" 
               onClick={debugStepBack}
-              disabled={timelineCursor <= 0 || isStepping}
+              disabled={!controls.stepBack}
               icon={<ArrowLeft className="w-4 h-4" />}
             >
               Back
@@ -2245,7 +2270,7 @@ print "Hello!"`}</pre>
               variant="primary" 
               size="sm" 
               onClick={debugStepInto}
-              disabled={!canStep}
+              disabled={!controls.stepInto}
               icon={<StepForward className="w-4 h-4" />}
             >
               Step Into
@@ -2254,7 +2279,7 @@ print "Hello!"`}</pre>
               variant="secondary"
               size="sm"
               onClick={debugStepOver}
-              disabled={!canStep}
+              disabled={!controls.stepOver}
               icon={<ChevronRight className="w-4 h-4" />}
             >
               Step Over
@@ -2263,7 +2288,7 @@ print "Hello!"`}</pre>
               variant="success" 
               size="sm" 
               onClick={debugRunToEnd}
-              disabled={debugState.halted || isStepping}
+              disabled={!controls.continueToEnd}
               icon={<Play className="w-4 h-4" />}
             >
               Continue

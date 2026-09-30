@@ -1,7 +1,7 @@
 import { motion } from 'framer-motion';
 import { useState } from 'react';
 import { Registers } from '@/types/cpu';
-import { getFlags } from '@/emulator/cpu';
+import { FlagsPanel } from '@/components/FlagsPanel';
 import { cn } from '@/utils/cn';
 
 interface RegisterDisplayProps {
@@ -33,8 +33,6 @@ export function RegisterDisplay({
   readOnly = false,
 }: RegisterDisplayProps) {
   const editable = onChangeRegister !== undefined && !readOnly;
-  const flags = getFlags(registers.FLAGS);
-  const previousFlags = previousRegisters ? getFlags(previousRegisters.FLAGS) : null;
 
   const formatHex = (value: number) => value.toString(16).toUpperCase().padStart(4, '0');
   const hasChanged = (reg: keyof Registers) => !!(previousRegisters && registers[reg] !== previousRegisters[reg]);
@@ -135,14 +133,10 @@ export function RegisterDisplay({
       {/* Flags */}
       <div className="pt-3 border-t border-[#1f2b29]">
         <span className="text-xs text-gray-500 uppercase tracking-wider block mb-2">Flags</span>
-        <div className="grid grid-cols-3 gap-2">
-          <FlagIndicator name="ZF" value={flags.ZF} changed={previousFlags ? previousFlags.ZF !== flags.ZF : false} label="Zero" />
-          <FlagIndicator name="SF" value={flags.SF} changed={previousFlags ? previousFlags.SF !== flags.SF : false} label="Sign" />
-          <FlagIndicator name="CF" value={flags.CF} changed={previousFlags ? previousFlags.CF !== flags.CF : false} label="Carry" />
-          <FlagIndicator name="OF" value={flags.OF} changed={previousFlags ? previousFlags.OF !== flags.OF : false} label="Overflow" />
-          <FlagIndicator name="PF" value={flags.PF} changed={previousFlags ? previousFlags.PF !== flags.PF : false} label="Parity" />
-          <FlagIndicator name="AF" value={flags.AF} changed={previousFlags ? previousFlags.AF !== flags.AF : false} label="Aux Carry" />
-        </div>
+        <FlagsPanel
+          flags={registers.FLAGS}
+          previousFlags={previousRegisters?.FLAGS}
+        />
       </div>
 
       {/* Flags Raw Value */}
@@ -152,9 +146,7 @@ export function RegisterDisplay({
           {editable ? (
             <RegisterField name="FLAGS" value={registers.FLAGS} onCommit={(value) => onChangeRegister!('FLAGS', value)} />
           ) : (
-            <span className="font-mono text-sm text-gray-400">
-              {formatHex(registers.FLAGS)} ({registers.FLAGS.toString(2).padStart(16, '0')})
-            </span>
+            <span className="font-mono text-sm text-gray-400">{formatHex(registers.FLAGS)}</span>
           )}
         </div>
       </div>
@@ -228,35 +220,6 @@ function RegisterChip({ name, value, changed }: { name: string; value: number; c
   );
 }
 
-function FlagIndicator({ name, value, changed, label }: { name: string; value: boolean; changed: boolean; label: string }) {
-  return (
-    <motion.div
-      initial={false}
-      animate={{
-        backgroundColor: value ? 'rgba(47, 191, 113, 0.2)' : 'rgba(19, 32, 30, 1)',
-        borderColor: changed ? 'rgba(240, 180, 91, 0.7)' : value ? 'rgba(47, 191, 113, 0.35)' : 'rgba(31, 43, 41, 1)',
-      }}
-      title={label}
-      className={cn(
-        'px-3 py-1.5 rounded-lg text-xs font-mono font-semibold transition-all border',
-        value ? 'text-[#5de6a0]' : 'text-gray-600'
-      )}
-    >
-      <span>{name}</span>
-      {changed && <span className="ml-1 text-[#f0b45b]">*</span>}
-      <motion.span 
-        className="ml-1"
-        initial={false}
-        animate={{ 
-          color: value ? '#5de6a0' : '#4b5563',
-          scale: value ? 1.2 : 1
-        }}
-      >
-        {value ? '1' : '0'}
-      </motion.span>
-    </motion.div>
-  );
-}
 
 /**
  * One register's value, editable in place.
