@@ -32,13 +32,13 @@
  */
 
 import { Cpu, createInitialState as createEngineState } from '@/engine/cpu/cpu';
-import { Memory, SEGMENT_SIZE, physicalAddress } from '@/engine/memory';
+import { MAX_PHYSICAL, Memory, SEGMENT_SIZE, physicalAddress } from '@/engine/memory';
 import { assemble } from '@/engine/assembler/assemble';
 import { decode, formatOperand, type DecodedInstruction } from '@/engine/cpu/decode';
 import { parentRegisterOf, registerEffects } from '@/engine/cpu/effects';
 import { getFlags, type ProgramOutput } from '@/emulator/cpu';
 import type { CPUState, Registers } from '@/types/cpu';
-import { WRITABLE_REGISTERS, type InstructionView, type SourceMapEntry, type StepDiagnostics, type TraceEntry } from '@/lab/types';
+import { WRITABLE_REGISTERS, type InstructionView, type SegmentName, type SourceMapEntry, type StepDiagnostics, type TraceEntry } from '@/lab/types';
 
 /** Where a .COM program starts, and the default the lab has always used. */
 const COM_ORIGIN = 0x100;
@@ -296,6 +296,26 @@ export class V2Session {
    */
   sourceLineAt(ip: number): number | null {
     return findV2SourceLine(this.sourceMap, this.codeSegment, ip & 0xffff);
+  }
+
+  /**
+   * The 64 KB of one segment, copied out.
+   *
+   * Copied because a segment at the top of the 1 MB space runs off the end of
+   * the memory holding it, and a view handed to a panel would be short. It costs
+   * 64 KB per call, so callers should ask once per render rather than per row.
+   */
+  memoryIn(segment: SegmentName): Uint8Array {
+    const base = (this.cpu.state[segment] & 0xffff) << 4;
+    const out = new Uint8Array(SEGMENT_SIZE);
+    const physical = this.cpu.memory.bytes;
+    // Masked per byte, because a 64 KB window starting near the top of the
+    // address space wraps past its end rather than stopping short. That is what
+    // the real machine does too, so the panel draws what happened.
+    for (let offset = 0; offset < SEGMENT_SIZE; offset++) {
+      out[offset] = physical[(base + offset) & MAX_PHYSICAL];
+    }
+    return out;
   }
 
   setRegister(name: string, value: number): boolean {

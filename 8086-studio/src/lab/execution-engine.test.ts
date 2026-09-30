@@ -943,3 +943,170 @@ describe('setRegister', () => {
     }
   });
 });
+
+/**
+ * Reading a segment, because the memory and stack panels index one.
+ *
+ * `state.memory` cannot serve both panels, and the reason is not a detail of the
+ * new engine's memory model -- it is that the two engines disagree about what
+ * `state.memory` even is. On the legacy it is the whole 4 KB world, so an SP
+ * index and a `0100h` index both land in real memory. On the new engine it is
+ * a mirror of the segment the program is *running* in, which is the right thing
+ * for the listing and completely wrong for the stack: `PUSH AX` writes through
+ * `SS:SP`, the mirror never sees it, and the Stack panel showed the program's
+ * own bytes with the pushed word nowhere in them.
+ *
+ * So a panel asks for a segment by name. That is the fix, and these tests are
+ * the fix: the pushed word is at `SP` in `SS`, a `.DATA` program's data is in
+ * `DS` and not in `CS`, and the legacy answers with the flat image it always had.
+ */
+describe('memoryIn', () => {
+  /** A word read little-endian, which is how a push lays it down. */
+  const wordAt = (bytes: Uint8Array, offset: number): number => bytes[offset] | (bytes[offset + 1] << 8);
+
+  it('the stack panel sees what a push wrote, on the new engine', () => {
+    // The bug this method exists for. `PUSH AX` with AX = 1234h writes 34 12 at
+    // SS:SP-2, and the Stack panel reads the word at SP. Reading `state.memory`
+    // instead showed the code segment, where those two bytes are the operand of
+    // the very PUSH that wrote them.
+    const s = session('v2', 'MOV AX, 1234h\nPUSH AX\nHLT');
+    s.step(1, 0);
+    s.step(2, 0);
+
+    const stack = s.memoryIn('SS');
+    expect(wordAt(stack, s.state.registers.SP)).toBe(0x1234);
+    // And the byte order is the stack's, not the assembler's: low byte first.
+    expect(stack[s.state.registers.SP]).toBe(0x34);
+    expect(stack[s.state.registers.SP + 1]).toBe(0x12);
+  });
+
+  it('the stack panel keeps up with successive pushes and pops', () => {
+    const s = session('v2', 'MOV AX, 1111h\nPUSH AX\nMOV AX, 2222h\nPUSH AX\nPOP BX\nHLT');
+    for (let i = 1; i <= 5; i++) s.step(i, 0);
+
+    const stack = s.memoryIn('SS');
+    expect(s.state.registers.BX).toBe(0x2222);
+    // A pop moves SP and leaves the bytes alone, so the word that was just
+    // popped is now *below* SP, and the one under it is the earlier push. The
+    // panel reads the word at SP, which is now the earlier one -- that is what
+    // the stack pointer says the next push will land on.
+    expect(wordAt(stack, s.state.registers.SP)).toBe(0x1111);
+    expect(wordAt(stack, s.state.registers.SP - 2)).toBe(0x2222);
+  });
+
+  it('a data segment view shows the data, not the code segment', () => {
+    // A `.DATA` program puts its segments at different bases, so this is the
+    // case where reading the code segment is not merely unhelpful but plainly
+    // wrong: the bytes at DS:0 are the data, and they are not in CS at all.
+    const s = session(
+      'v2',
+      [
+        'CODE SEGMENT',
+        'start:',
+        '  MOV AX, 0',
+        'CODE ENDS',
+        'DATA SEGMENT',
+        'values DW 0BEEFh',
+        'DATA ENDS',
+        'END start',
+      ].join('\n'),
+    );
+    expect(s.state.registers.DS).not.toBe(s.state.registers.CS);
+
+    const data = s.memoryIn('DS');
+    const code = s.memoryIn('CS');
+    const offset = 0; // `values` is the first thing in the data segment
+    expect(wordAt(data, offset)).toBe(0xbeef);
+    expect(wordAt(code, offset), 'the code segment must not have borrowed it').not.toBe(0xbeef);
+  });
+
+  it('a data segment view follows a write the program made', () => {
+    const s = session(
+      'v2',
+      [
+        'CODE SEGMENT',
+        'start:',
+        '  MOV WORD PTR [0], 0CAFEh',
+        '  HLT',
+        'CODE ENDS',
+        'DATA SEGMENT',
+        '  DW 0',
+        'DATA ENDS',
+        'END start',
+      ].join('\n'),
+    );
+    for (let i = 1; i <= 2; i++) s.step(i, 0);
+    expect(wordAt(s.memoryIn('DS'), 0)).toBe(0xcafe);
+  });
+
+  it('every segment answers 64 KB, including one at the top of the address space', () => {
+    // A 64 KB window at F000:0000 runs to the end of the 1 MB and past it. A
+    // subarray would come back short and a panel would read past what it was
+    // given, so the copy wraps per byte, which is what the machine does.
+    const s = session('v2', 'HLT');
+    s.setRegister('CS', 0xf000);
+    s.setRegister('DS', 0xffff);
+    for (const segment of ['CS', 'DS', 'ES', 'SS'] as const) {
+      expect(s.memoryIn(segment).length, segment).toBe(0x10000);
+    }
+    // A byte written at the very end of the space is readable at offset FFFF.
+    s.step(1, 0);
+    expect(s.memoryIn('DS').length).toBe(0x10000);
+  });
+
+  it('the legacy answers with its flat image, for every segment', () => {
+    // Not a shortcut. The legacy's memory model *is* one flat 4 KB array with
+    // DS and ES pinned at 100h, so there is no second place a stack could be.
+    // Handing a panel something else would be inventing a memory the engine does
+    // not have.
+    const s = session('legacy', 'MOV AX, 1234h\nPUSH AX\nHLT');
+    const before = s.memoryIn('CS');
+    expect(before.length).toBe(0x1000);
+    expect(before).toBe(s.memoryIn('DS'));
+    expect(before).toBe(s.memoryIn('ES'));
+    expect(before).toBe(s.memoryIn('SS'));
+    // The very same array as `state.memory`, not a copy of it.
+    expect(before).toBe(s.state.memory);
+  });
+
+  it('the legacy sees a push in that image too, so its stack view is right', () => {
+    // The panel code is shared, so the stack view has to be right on both
+    // engines or fixing v2 has simply moved the bug.
+    const s = session('legacy', 'MOV AX, 1234h\nPUSH AX\nHLT');
+    s.step(1, 0);
+    s.step(2, 0);
+    expect(wordAt(s.memoryIn('SS'), s.state.registers.SP)).toBe(0x1234);
+  });
+
+  it('a program with one segment for everything looks the same either way', () => {
+    // The .COM case, where CS, DS, ES and SS are all the same base. Any engine
+    // disagreement here would be a bug rather than a divergence, so it is worth
+    // asserting that the shared panel code gets one answer.
+    for (const engine of ENGINES) {
+      const s = session(engine, 'MOV AX, 1111h\nPUSH AX\nHLT');
+      s.step(1, 0);
+      s.step(2, 0);
+      const sp = s.state.registers.SP;
+      for (const segment of ['CS', 'DS', 'ES', 'SS'] as const) {
+        expect(wordAt(s.memoryIn(segment), sp), `${engine} ${segment}`).toBe(0x1111);
+      }
+    }
+  });
+
+  it('reads the current state, not the state at load time', () => {
+    const s = session('v2', 'MOV AX, 0AAAAh\nPUSH AX\nHLT');
+    expect(wordAt(s.memoryIn('SS'), s.state.registers.SP), 'before the push').not.toBe(0xaaaa);
+    s.step(1, 0);
+    s.step(2, 0);
+    expect(wordAt(s.memoryIn('SS'), s.state.registers.SP), 'after the push').toBe(0xaaaa);
+  });
+
+  it('gives each call its own array, so a panel cannot scribble on memory', () => {
+    // If this handed back a live view into engine memory, a hex viewer painting
+    // a row of NULs would corrupt the program it is displaying.
+    const s = session('v2', 'HLT');
+    const first = s.memoryIn('CS');
+    first[0x100] = 0xff;
+    expect(s.memoryIn('CS')[0x100]).not.toBe(0xff);
+  });
+});

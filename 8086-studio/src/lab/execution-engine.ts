@@ -19,10 +19,17 @@ import { buildSourceMapEntries, findInstructionForSourceLine, findSourceLineForI
 import { V2Session } from '@/lab/engine-v2';
 import type { AssembledProgram, CPUState, Instruction } from '@/types/cpu';
 import type { ProgramOutput } from '@/emulator/cpu';
-import { WRITABLE_REGISTERS, type InstructionView, type SourceMapEntry, type StepDiagnostics } from '@/lab/types';
+import {
+  WRITABLE_REGISTERS,
+  type InstructionView,
+  type SegmentName,
+  type SourceMapEntry,
+  type StepDiagnostics,
+} from '@/lab/types';
 
 /** Which engine the lab is running. The URL parameter's only accepted value. */
 export type EngineId = 'legacy' | 'v2';
+
 
 
 export const DEFAULT_ENGINE: EngineId = 'legacy';
@@ -102,6 +109,20 @@ export interface DebugSession {
    * why this is on the session rather than folded into a step.
    */
   setRegister(name: string, value: number): boolean;
+  /**
+   * The bytes of one segment, for the memory and stack panels to draw.
+   *
+   * Not a detail: `state.memory` is a single flat image and the two engines do
+   * not agree on what it is. The legacy's is its whole 4 KB world, and asking it
+   * for `SS` gets you the same bytes -- which is the truth about the legacy, not
+   * a shortcut. The new engine's is the code segment, so the stack panel reading
+   * it with an `SP` index was showing program bytes labelled as the stack.
+   *
+   * The new engine copies rather than subarrays, because a 64 KB segment at the
+   * top of the address space runs off the end of the memory it lives in, and a
+   * panel handed a short view would read past what it was given.
+   */
+  memoryIn(segment: SegmentName): Uint8Array;
   /**
    * The instruction at an address, or null when the engine cannot say.
    *
@@ -293,6 +314,14 @@ export class LegacySession implements DebugSession {
 
   sourceMapEntries(): readonly SourceMapEntry[] {
     return this.sourceMap;
+  }
+
+  memoryIn(_segment: SegmentName): Uint8Array {
+    // The same bytes for every segment, and that is the honest answer: this
+    // engine has one flat 4 KB image and its DS and ES are pinned at 100h, so
+    // there is no second place for a stack to be. Only SS is a real register
+    // here, and its base is folded into the address already.
+    return this.current.memory;
   }
 
   setRegister(name: string, value: number): boolean {

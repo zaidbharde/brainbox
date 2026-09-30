@@ -296,6 +296,15 @@ export const WRITABLE_REGISTERS = [
 
 export type WritableRegister = (typeof WRITABLE_REGISTERS)[number];
 
+/**
+ * The four segment registers, as a memory or stack panel asks for one.
+ *
+ * In `types.ts` rather than in the session module because the session module
+ * imports the new engine, and the new engine needs this name: asking it where
+ * its own segments are would be an import loop.
+ */
+export type SegmentName = 'CS' | 'DS' | 'ES' | 'SS';
+
 export interface ReplaySession {
   version: string;
   createdAtMs: number;
