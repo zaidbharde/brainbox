@@ -916,9 +916,16 @@ function assembleInstruction(
   const allResolved = parsed.operands.every((operand) => !isUnresolved(operand));
   if (!allResolved) {
     for (const operand of parsed.operands) {
-      if (operand.kind === "imm" || operand.kind === "target") {
-        ctx.symbols.reference(operand.text, operand.line, operand.column);
-      }
+      if (operand.kind !== "imm" && operand.kind !== "target") continue;
+      // A quoted literal in the operand means the expression was not waiting on a
+      // symbol at all -- it was text where a value belonged, which the evaluator
+      // has already reported precisely. Registering the whole operand as a name
+      // to resolve in pass 2 used to follow from that, and pass 2 duly complained
+      // about an undefined symbol called `'A,B'` for `MOV AX, OFFSET 'a,b'`: a
+      // second error naming something the person never wrote. A symbol name
+      // cannot contain a quote, so this cannot skip a real forward reference.
+      if (operand.text.includes("'") || operand.text.includes('"')) continue;
+      ctx.symbols.reference(operand.text, operand.line, operand.column);
     }
   }
 

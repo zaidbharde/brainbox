@@ -269,23 +269,47 @@ export function tokenize(source: string, diagnostics?: DiagnosticBag): Token[] {
       continue;
     }
 
-    // Character literal
+    // Quoted literal. MASM accepts either quote character for text in a data
+    // directive, and a single quote character on its own as a character value, so
+    // which token this is depends on how much is between the quotes rather than
+    // on which quote was used: `'A'` is a character and `'AB'` is a two-byte
+    // string. Deciding it here rather than at the data directive is what keeps
+    // `MOV AL, 'A'` a character and `DB 'AB'` the two bytes it looks like.
+    //
+    // The distinction is not cosmetic. Reading a multi-character run as a
+    // character used to keep only the last byte, which turned `msg DB 'Hello'`
+    // into a message of one `$` -- and a `$` is a DOS string terminator, so
+    // `INT 21h` AH=09h printed nothing at all and the program still reported
+    // success.
     if (ch === "'") {
       advance(1);
       let value = 0;
       let length = 0;
+      let decoded = "";
       while (i < source.length && source[i] !== "'" && source[i] !== "\n") {
         if (source[i] === "\\") {
           advance(1);
           const esc = source[i];
-          if (esc === "n") value = 10;
-          else if (esc === "r") value = 13;
-          else if (esc === "t") value = 9;
-          else if (esc === "0") value = 0;
-          else value = esc ? esc.charCodeAt(0) : 0;
+          if (esc === "n") {
+            value = 10;
+            decoded += "\n";
+          } else if (esc === "r") {
+            value = 13;
+            decoded += "\r";
+          } else if (esc === "t") {
+            value = 9;
+            decoded += "\t";
+          } else if (esc === "0") {
+            value = 0;
+            decoded += "\0";
+          } else {
+            value = esc ? esc.charCodeAt(0) : 0;
+            decoded += esc ?? "";
+          }
           advance(1);
         } else {
           value = source.charCodeAt(i);
+          decoded += source[i];
           advance(1);
         }
         length++;
@@ -297,11 +321,19 @@ export function tokenize(source: string, diagnostics?: DiagnosticBag): Token[] {
       }
       advance(1); // closing quote
       if (length !== 1) {
-        diagnostics?.warning(
-          startLine,
-          startCol,
-          `character literal contains ${length} characters; only the last one is used`,
-        );
+        if (length === 0) {
+          diagnostics?.error(startLine, startCol, "a string literal cannot be empty");
+        }
+        push({
+          kind: "string",
+          text: `'${decoded}'`,
+          value: value & 0xff,
+          string: decoded,
+          line: startLine,
+          column: startCol,
+          negative: false,
+        });
+        continue;
       }
       push({
         kind: "char",

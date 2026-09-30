@@ -214,6 +214,20 @@ export class ExpressionParser {
       return this.resolved(this.symbols.locationCounter(), true);
     }
 
+    if (token.kind === "string") {
+      // A quoted run longer than one character is text, not a value, so it has no
+      // number to stand for. Saying so beats letting the statement parser go on
+      // to report the pieces of it as undefined symbols, which is what this used
+      // to produce for `MOV AX, 'Hello'`.
+      this.diagnostics.error(
+        token.line,
+        token.column,
+        `a string of ${token.string?.length ?? 0} characters is not a value; store it with DB, or quote a single character for its code`,
+      );
+      this.pos++;
+      return unresolved;
+    }
+
     if (token.kind === "question") {
       // `?` on its own is only legal as a DUP filler; as an expression it is 0.
       this.pos++;

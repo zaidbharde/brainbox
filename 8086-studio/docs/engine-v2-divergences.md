@@ -62,14 +62,6 @@ when it runs dry, where real DOS would block. Collecting a value the engine then
 discards would be worse than not asking, because the run would look fed when it was
 not.
 
-### The new engine's step diagnostics report printed text; the legacy's do not
-
-A whole-program run collects DOS print-string output on both engines, but the
-legacy's per-step diagnostics know only about `OUT` and `OUTC`. A program using
-`INT 21h AH=09H` therefore shows nothing in the debug output panel on the legacy
-while printing correctly when run. The legacy is left alone; this is a gap in its
-step diagnostics, not a difference in what the programs do.
-
 ### Hand-written assembly maps to source lines only on the new engine
 
 The legacy builds its source map from `_SRC_` labels that the structured compiler
@@ -174,22 +166,82 @@ reaches the right text only because the scan runs forward far enough to find it.
 The new engine resolves the label to the address, so DX is `100h`, the scan starts
 at the first character, and the output is exactly `Ok`.
 
-The Run button's output panel shows this stream as it comes, so a program that
-prints will show the padding on the legacy and will not on the new engine. This is
+The Run button's output panel shows this stream as it comes, so a program written
+this way shows the padding on the legacy and will not on the new engine. This is
 pre-existing legacy behaviour — the Run button called the same `runProgram` before
-the switch existed — and it is pinned in `execution-engine.test.ts` so that neither
-engine can lose it unnoticed.
+the switch existed.
 
-## Two bugs the new engine had, and no longer has
+**Write `MOV DX, OFFSET msg` instead.** `OFFSET` is the one spelling both assemblers
+accept and both mean the same thing by; with it the legacy assembles `MOV DX, 100h`,
+the scan starts at the first character, and the two engines produce byte-identical
+output. Every fixture in the suite that prints a string uses it, and
+`run-output.test.ts` asserts that the printed section of the panel is exactly the
+message on both engines. The padding above is a property of the bare-label spelling,
+not of a print-string run in general — a reading that this document previously got
+wrong, in the other direction, by treating it as unavoidable.
 
+### A single-quoted string is a data initializer on the new engine only
+
+The legacy has no single-quoted string support at all:
+
+```asm
+msg DB 'Hello 8086$'
+```
+
+fails to assemble with `Invalid data initializer: 'Hello 8086$'`. It wants
+`msg DB "Hello 8086$"`. This is a legacy limitation and is left alone: the legacy
+assembler is not being extended, and the report is that a person who writes
+single quotes gets a clear error rather than a silent wrong answer.
+
+The new engine accepts either quote, as MASM does. It did not always, and the
+version that did not is the most confusing failure in this file's history — see
+below.
+
+### A bare label in `MOV` is a memory read on the legacy, and is rejected by the new engine
+
+Related to the padding above, and worth stating on its own because it is silent on
+the legacy rather than loud. Given `values DW 10, 20, 30, 40`, the legacy assembles
+`MOV SI, values` as a load of the word stored at that address, so SI ends up holding
+`10` — the first element, not its address — and any loop built on it walks off into
+whatever follows and computes a wrong answer with no diagnostic anywhere. The new
+assembler rejects the bare form outright, which is the better of the two failures.
+
+This is **not** a difference in where the two engines keep declared data. It is not
+a data-segment difference at all: the legacy does lay a `DATA SEGMENT` out, at
+`0100h`, and the new engine packs its segments elsewhere. `MOV SI, OFFSET values`
+finds the array correctly on both and both sum it to the same total. Use `OFFSET`.
+
+## Bugs that are fixed, and how each was found
+
+- **A single-quoted `DB` string assembled to one byte and printed nothing.** The v2
+  lexer used `"` as its only string delimiter and read `'` as a character literal, so
+  `msg DB 'Hello 8086$'` became a single byte holding the *last* character — `$`. Since
+  `$` is a DOS string terminator, `INT 21h AH=09h` read the message's first byte, found
+  the terminator, and correctly printed nothing. The program ran to `INT 21h AH=4Ch`,
+  so the panel said `Program completed successfully` over an empty output section. The
+  lexer also emitted a warning about the discarded characters, and nothing surfaced
+  warnings, so the one clue was invisible. MASM accepts either quote character, and
+  does; the lexer now decides by length rather than by which quote was used, so
+  `'A'` is still a character and `DB 'AB'` is the two bytes it looks like.
+
+  Found by running the program that ships in no sample and appears in no test, and
+  only visible in a browser. `run-output.test.ts` now tests the string the Output panel
+  renders, and iterates every shipped sample asserting that a run, a step-by-step walk
+  and the panel all agree.
 - **Direct-offset stores were dropped.** `MOV [0200h], AX` is opcode `A3`, a direct
   memory offset rather than a ModR/M form, and the new engine used to discard it,
   leaving `0200h` empty.
 - **Segment-register `MOV` was not decoded.** `MOV AX, DS` and its relatives.
+- **The legacy's step diagnostics dropped DOS output.** The debugger kept its own
+  capture of what an instruction printed, which knew about `OUT` and `OUTC`, while the
+  emulator beside it also knew about `INT 21h`. Run asked the emulator; Step asked the
+  debugger. So a DOS print showed after a Run and not while stepping, on the legacy
+  only. One function answers for both now. The golden trace did not move: every output
+  line in it comes from `OUT` or `OUTC`, and no traced program prints through DOS.
 
-Both were found by `compatibility.test.ts`, which runs the shipped samples on both
-engines and compares the data they leave behind. The samples had been passing while
-the new engine silently discarded a store, because nothing had compared the two
+The first two were found by `compatibility.test.ts`, which runs the shipped samples on
+both engines and compares the data they leave behind. The samples had been passing
+while the new engine silently discarded a store, because nothing had compared the two
 engines' memory.
 
 ## What the new engine implements that the legacy does not

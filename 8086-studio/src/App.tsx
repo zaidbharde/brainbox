@@ -35,6 +35,7 @@ import { InterruptIOPanel } from '@/components/lab/InterruptIOPanel';
 import { compile, CompilationResult, SourceLanguage, SAMPLE_PROGRAMS_BY_LANGUAGE } from '@/compiler/compiler';
 import { detectFrontendLanguage } from '@/compiler/transpiler';
 import { createInitialState, ProgramOutput } from '@/emulator/cpu';
+import { formatProgramOutput, runSourceToPanelText } from '@/lab/run-output';
 import { assemble } from '@/emulator/assembler';
 import { AssembledProgram, CPUState, Registers } from '@/types/cpu';
 import { createSession, engineFromQuery, legacySession, type DebugSession } from '@/lab/execution-engine';
@@ -391,33 +392,7 @@ export function App() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [viewMode]);
 
-  const formatOutput = (output: ProgramOutput[]): string => {
-    let result = '';
-    let currentLine = '';
-    
-    for (const item of output) {
-      if (item.type === 'char') {
-        if (item.value === 10) { // newline
-          result += currentLine + '\n';
-          currentLine = '';
-        } else {
-          currentLine += String.fromCharCode(item.value);
-        }
-      } else {
-        if (currentLine) {
-          result += currentLine;
-          currentLine = '';
-        }
-        result += item.value + '\n';
-      }
-    }
-    
-    if (currentLine) {
-      result += currentLine;
-    }
-    
-    return result;
-  };
+  const formatOutput = formatProgramOutput;
 
   const pause = useCallback((ms: number) => new Promise<void>((resolve) => {
     window.setTimeout(resolve, ms);
@@ -1422,32 +1397,20 @@ export function App() {
   ]);
 
   const runAssemblySource = useCallback((source: string): string => {
-    const engine = engineFromQuery(window.location.search);
-    const { session, diagnostics } = createSession(engine, source);
-    if (session === null || diagnostics.length > 0) {
-      return `Error:\n${diagnostics.map((d) => `Line ${d.line}: ${d.message}`).join('\n')}`;
-    }
-
-    const inputs: number[] = [];
-    const prompts = session.inputPrompts();
-    for (let i = 0; i < prompts.length; i++) {
-      const raw = window.prompt(`Input required for IN port ${prompts[i]} (#${i + 1})`, '0');
+    // The panel text is assembled in `runSourceToPanelText`; the only part that
+    // needs a browser is the prompt for port input, which is passed in so the rest
+    // of the path stays testable without a DOM.
+    return runSourceToPanelText(engineFromQuery(window.location.search), source, (port, index) => {
+      const raw = window.prompt(`Input required for IN port ${port} (#${index})`, '0');
       if (raw === null) {
-        return 'Run cancelled by user.';
+        return { kind: 'cancelled' };
       }
       const value = Number(raw.trim());
       if (!Number.isFinite(value)) {
-        return `Error:\nInvalid numeric input: "${raw}"`;
+        return { kind: 'invalid', text: raw };
       }
-      inputs.push(Math.trunc(value));
-    }
-
-    const { state, output } = session.runToCompletion(inputs, 10000);
-    let outputText = formatOutput([...output]);
-    outputText += state.error
-      ? `\n\nError: ${state.error}`
-      : '\n\nProgram completed successfully';
-    return outputText;
+      return { kind: 'value', value: Math.trunc(value) };
+    });
   }, []);
 
   const outputIsError = runOutput.includes('Error:') || runOutput.includes('Compilation failed');

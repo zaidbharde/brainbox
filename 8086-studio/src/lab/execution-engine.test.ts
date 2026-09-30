@@ -18,6 +18,7 @@ import {
   type EngineId,
 } from '@/lab/execution-engine';
 import type { DebugSession } from '@/lab/execution-engine';
+import { assemble } from '@/engine/assembler/assemble';
 import { WRITABLE_REGISTERS } from '@/lab/types';
 
 /** Assemble and step, failing loudly if the program did not assemble. */
@@ -717,14 +718,28 @@ describe('view parts', () => {
     }
   });
 
-  it('a string operand is reported as the value it resolved to', () => {
+  it('a string literal is text, not an instruction operand', () => {
+    // This used to be pinned the other way round: `MOV AX, OFFSET 'a,b'` was
+    // assembled and the view reported the number the literal had collapsed to,
+    // because a single-quoted run was read as a character and kept its last
+    // byte. A quoted run of more than one character is now a string, and a
+    // string has no value to be an immediate -- which is what MASM says, and what
+    // this assembler already said for the double-quoted spelling.
+    const errors = assemble("MOV AX, OFFSET 'a,b'\nHLT").errors.map((e) => e.message);
+    expect(errors.join(' '), 'it says what is wrong, not "undefined symbol"').toMatch(/is not a value/);
+    expect(errors.join(' ')).not.toMatch(/undefined symbol/);
+  });
+
+  it('a character operand is reported as the value it resolved to', () => {
     // The view describes the machine, not the source, so an operand written as a
-    // string comes back as the number it became. Pinned because the alternative
-    // -- handing the panels the source spelling -- would make a comma in a
-    // literal look like an operand boundary to anything that split the line.
-    const view = viewAt('v2', "MOV AX, OFFSET 'a,b'");
-    expect(view?.operands.length, 'still two operands').toBe(2);
-    expect(view?.operands[1], 'the value, not the literal').toMatch(/^[0-9A-F]+h$/);
+    // character comes back as the number it became. This is the case that
+    // survives now that a longer quoted run is text: a single quoted character is
+    // still a legal immediate, and the panels should show 41h rather than 'A'.
+    // It also keeps the narrower half of the original concern alive -- the view
+    // splits on operand boundaries, and a value that is not a source spelling is
+    // what makes that splitting safe.
+    const view = viewAt('v2', "MOV AX, 'A'");
+    expect(view?.operands).toEqual(['AX', '41h']);
   });
 
   it('a repeat prefix is not an operand of the instruction it repeats', () => {
