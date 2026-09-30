@@ -222,6 +222,8 @@ function buildCpu(assembly: V2Assembly, inputValues: readonly number[]): Cpu {
  * snapshots rather than by rewinding here.
  */
 export class V2Session {
+  /** A constant, like the engine switch: there is no way to change it later. */
+  readonly engine = 'v2' as const;
   private readonly cpu: Cpu;
   /** The running segment as a flat array, which is what the lab's views index. */
   private readonly mirror: Uint8Array;

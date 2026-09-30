@@ -41,6 +41,16 @@ export const DEFAULT_ENGINE: EngineId = 'legacy';
  * list, so re-running or rewinding is not something an engine has to support.
  */
 export interface DebugSession {
+  /**
+   * Which engine this is.
+   *
+   * Asked of the session rather than read back out of the URL by the panels,
+   * because the two are not always the same thing: a program produced by one of
+   * the frontend compilers never went through either assembler, so the lab hands
+   * it a legacy session whatever the URL says. A panel that trusted the URL would
+   * offer a segment picker over an engine that has one flat memory.
+   */
+  readonly engine: EngineId;
   /** The engine's current state, in the lab's shape. */
   readonly state: CPUState;
   /** Assemble problems, empty if the program is runnable. */
@@ -228,6 +238,8 @@ export function withEngineInQuery(search: string, engine: EngineId): string {
  * does not ask for the new one.
  */
 export class LegacySession implements DebugSession {
+  /** A constant, like the engine switch: there is no way to change it later. */
+  readonly engine: EngineId = 'legacy';
   readonly diagnostics: readonly { line: number; message: string }[];
 
   private readonly program: AssembledProgram;

@@ -36,7 +36,7 @@ import { compile, CompilationResult, SourceLanguage, SAMPLE_PROGRAMS_BY_LANGUAGE
 import { detectFrontendLanguage } from '@/compiler/transpiler';
 import { createInitialState, ProgramOutput } from '@/emulator/cpu';
 import { assemble } from '@/emulator/assembler';
-import { AssembledProgram, CPUState } from '@/types/cpu';
+import { AssembledProgram, CPUState, Registers } from '@/types/cpu';
 import { createSession, engineFromQuery, legacySession, type DebugSession } from '@/lab/execution-engine';
 import { ASSEMBLY_DEMOS } from '@/lab/demos';
 import { createInitialPerformanceMetrics, updatePerformanceMetrics } from '@/lab/performance';
@@ -55,6 +55,7 @@ import {
   ReplaySession,
   InstructionView,
   SavedSnapshot,
+  SegmentName,
   SourceMapEntry,
   SnapshotComparison,
   TraceEntry,
@@ -62,6 +63,7 @@ import {
   WatchValue,
 } from '@/lab/types';
 import { buildInstructionInspectorData } from '@/lab/instruction-inspector';
+import { SEGMENT_NAMES, dataSegmentStart, runningSegment, segmentBaseFor } from '@/lab/segments';
 import { buildExecutionAnalytics } from '@/lab/analytics';
 import { buildGuidedLearningContent } from '@/lab/guided-learning';
 import { evaluateWatchExpressions } from '@/lab/watch';
@@ -341,6 +343,10 @@ export function App() {
   const [pipelineState, setPipelineState] = useState<PipelineState>(DEFAULT_PIPELINE_STATE);
   const [performanceMetrics, setPerformanceMetrics] = useState<PerformanceMetrics>(createInitialPerformanceMetrics);
   const [changedMemoryWords, setChangedMemoryWords] = useState<number[]>([]);
+  // Which segment the memory panel's hex viewer is showing. Only offered on the
+  // new engine; the legacy has one flat image and the picker would be a choice
+  // between four identical answers.
+  const [memorySegment, setMemorySegment] = useState<SegmentName>('CS');
   const [breakpoints, setBreakpoints] = useState<Set<number>>(new Set());
   const [savedSnapshots, setSavedSnapshots] = useState<SavedSnapshot[]>([]);
   const [snapshotCompareAId, setSnapshotCompareAId] = useState<string | null>(null);
@@ -1158,6 +1164,63 @@ export function App() {
   const debugInstructionAddresses = useMemo<number[]>(() => {
     return debugSession ? [...debugSession.instructionAddresses()] : [];
   }, [debugSession]);
+
+  /**
+   * The segment images the memory panel draws, fetched once per render.
+   *
+   * `debugState.memory` cannot do this job on both engines, which is why there is
+   * a session method for it. On the new engine that array is a mirror of the
+   * segment the program is *running* in, so the stack panel indexing it with SP
+   * was showing the program's own bytes, and the data panel was showing the code
+   * segment's 0100h under a Data heading. On the legacy it is one flat 4 KB image
+   * and asking for `SS` or `DS` returns that same image -- the legacy genuinely
+   * has one memory, so the panels below draw exactly what they always did.
+   *
+   * Keyed on the state object rather than on `state.memory`, because the adapter
+   * reuses one array and fills it in place: a memo keyed on the array would not
+   * recompute and the stack would keep showing whatever the first step pushed.
+   */
+  const segmentImages = useMemo<Record<SegmentName, Uint8Array>>(() => {
+    const fallback = debugState.memory;
+    if (!debugSession) {
+      return { CS: fallback, DS: fallback, ES: fallback, SS: fallback };
+    }
+    // All four, so the picker can be moved to any of them without the memo
+    // knowing which are on screen. Each is a 64 KB copy and there are four, so
+    // this is 256 KB per render -- which is why it is a memo and not a call
+    // inside the panel, where the listing would make it once per row.
+    return {
+      CS: debugSession.memoryIn('CS'),
+      DS: debugSession.memoryIn('DS'),
+      ES: debugSession.memoryIn('ES'),
+      SS: debugSession.memoryIn('SS'),
+    };
+  }, [debugSession, debugState]);
+
+  /**
+   * Whether every segment register holds the same value, which is what decides
+   * if the step's writes can be highlighted in a view of any segment.
+   *
+   * True for every .COM program, because a .COM program has one segment, so the
+   * memory panel is unchanged for the programs the lab is mostly built around.
+   * False for a program that separates its segments, where the writes are only
+   * known to be offsets in the code segment and only that view is marked.
+   */
+  const { name: runningSegmentName, isEverywhere: writesInRunningSegment } =
+    runningSegment(debugState.registers);
+
+  /**
+   * Where the Data view starts, and the only part of the memory panel that has
+   * to know which engine it is looking at.
+   *
+   * 0100h is where a .COM program's data is, on both engines, and that is where
+   * the view has always been anchored. A program that declared its own segments
+   * on the new engine has its data at the start of its data segment instead, so
+   * the view moves to zero for it -- otherwise it would show the empty part of a
+   * two-byte segment. The legacy is pinned to 0100h regardless, because its data
+   * is at 0100h of one flat image whatever its registers say.
+   */
+  const dataStart = dataSegmentStart(debugSession?.engine ?? 'legacy', debugState.registers);
 
   const runTestbench = useCallback((): AssertionResult[] => {
     return runTestbenchAssertions(testbenchScript, debugState, debugOutput);
@@ -2387,28 +2450,79 @@ print "Hello!"`}</pre>
                   <CardHeader title="Memory" icon={<Layers className="w-4 h-4" />} />
                   <CardContent>
                     <div className="space-y-4">
+                      {/*
+                        Each view names the segment it is drawing and gets that
+                        segment's bytes from the session rather than from
+                        `debugState.memory`. On the new engine that array is the
+                        running segment, so the stack and data views were reading
+                        the code segment; on the legacy it is one flat image and
+                        all four names return the same bytes, which is the truth
+                        about that engine. `changedMemoryWords` are offsets in the
+                        running segment too, so they are only highlighted in a view
+                        of that segment -- for a .COM program, where all four
+                        registers hold the same value, that is every view.
+                      */}
                       <div>
-                        <span className="text-xs text-gray-500 uppercase tracking-wider">Stack (SP)</span>
+                        <span className="text-xs text-gray-500 uppercase tracking-wider">
+                          Stack (SS:SP)
+                        </span>
                         <div className="mt-2">
                           <MemoryView
-                            memory={debugState.memory}
+                            memory={segmentImages.SS}
                             start={(Math.max(0, debugState.registers.SP - 10) & ~1)}
                             words={6}
                             highlightAddress={debugState.registers.SP}
-                            changedAddresses={changedMemoryWords}
+                            changedAddresses={writesInRunningSegment ? changedMemoryWords : []}
                           />
                         </div>
                       </div>
                       <div>
-                        <span className="text-xs text-gray-500 uppercase tracking-wider">Data Segment (0100h)</span>
+                        <span className="text-xs text-gray-500 uppercase tracking-wider">
+                          Data Segment (DS:{formatHex(dataStart)})
+                        </span>
                         <div className="mt-2">
                           <MemoryView
-                            memory={debugState.memory}
-                            start={0x0100}
+                            memory={segmentImages.DS}
+                            start={dataStart}
                             words={8}
-                            changedAddresses={changedMemoryWords}
+                            changedAddresses={writesInRunningSegment ? changedMemoryWords : []}
                           />
                         </div>
+                      </div>
+                      <div>
+                        {/*
+                          New engine only. The legacy has one 4 KB image with DS
+                          and ES pinned at 100h, so the four buttons would offer
+                          four ways of looking at the same bytes; showing them
+                          there would be a control that cannot do anything.
+                        */}
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-xs text-gray-500 uppercase tracking-wider">
+                            Segment
+                          </span>
+                          {debugSession?.engine === 'v2' && (
+                            <SegmentPicker
+                              value={memorySegment}
+                              onChange={setMemorySegment}
+                              registers={debugState.registers}
+                            />
+                          )}
+                        </div>
+                        <div className="mt-2">
+                          <MemoryView
+                            memory={segmentImages[memorySegment]}
+                            start={0x0100}
+                            words={8}
+                            changedAddresses={
+                              memorySegment === runningSegmentName ? changedMemoryWords : []
+                            }
+                          />
+                        </div>
+                        {debugSession?.engine === 'v2' && (
+                          <p className="mt-2 text-xs text-gray-500">
+                            {memorySegment}:0100h, base {formatHex(segmentBaseFor(memorySegment, debugState.registers))}
+                          </p>
+                        )}
                       </div>
                       <div>
                         <span className="text-xs text-gray-500 uppercase tracking-wider">Recent Writes</span>
@@ -2649,6 +2763,41 @@ print "Hello!"`}</pre>
 
 function formatHex(value: number, width: number = 4) {
   return value.toString(16).toUpperCase().padStart(width, '0');
+}
+
+function SegmentPicker({
+  value,
+  onChange,
+  registers,
+}: {
+  value: SegmentName;
+  onChange: (segment: SegmentName) => void;
+  registers: Registers;
+}) {
+  return (
+    <div className="flex items-center gap-1" role="group" aria-label="Memory segment">
+      {SEGMENT_NAMES.map((segment) => {
+        const active = segment === value;
+        return (
+          <button
+            key={segment}
+            type="button"
+            onClick={() => onChange(segment)}
+            aria-pressed={active}
+            title={`${segment}:0100h, base ${formatHex(segmentBaseFor(segment, registers))}`}
+            className={cn(
+              'rounded-md border px-2 py-1 font-mono text-xs transition-colors',
+              active
+                ? 'border-[#6adfd1]/60 bg-[rgba(78,216,201,0.16)] text-[#7adfb1]'
+                : 'border-[#30496d]/55 bg-[rgba(12,20,33,0.82)] text-[#96abc9] hover:border-[#6adfd1]/40'
+            )}
+          >
+            {segment}
+          </button>
+        );
+      })}
+    </div>
+  );
 }
 
 function MemoryView({

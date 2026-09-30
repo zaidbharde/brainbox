@@ -404,6 +404,30 @@ describe('where the engines genuinely differ', () => {
     expect(session('legacy', 'IN AL, 30h\nHLT\n').inputPrompts().length).toBe(1);
     expect(session('v2', 'IN AL, 30h\nHLT\n').inputPrompts()).toEqual([]);
   });
+
+  it('lays a .COM program out differently, so offset 0100h means different bytes', () => {
+    // The Data view reads offset 0100h of DS, and the two engines put different
+    // things there. The legacy's assembler writes code at offset 0 of its flat
+    // image and declared data at 0100h, so 0100h is the data. The new engine
+    // loads the .COM file at 0100h of its one segment, so 0100h is the first
+    // instruction and the data follows the code.
+    //
+    // Both are honest readings of "DS:0100h" given how each lays a .COM file
+    // out, and the new engine's is the correct one: on a real 8086 a .COM file
+    // starts at CS:0100h with its data after it. The legacy's is left alone, as
+    // everything about the legacy is. Pinned because the memory panel draws this
+    // offset on both engines and the difference is otherwise invisible.
+    const dataAt = (engine: EngineId): number => {
+      const s = session(engine, PRINT_PROGRAM);
+      // 4F 6B 24 is "Ok$". Found at the data segment's 0100h on one engine and
+      // not the other, which is the whole difference.
+      const ds = s.memoryIn('DS');
+      return ds.indexOf(0x4f);
+    };
+    expect(dataAt('legacy')).toBe(0x0100);
+    // `MOV AX, imm16` at 0100h, so the string is after the four instructions.
+    expect(dataAt('v2')).toBe(0x0108);
+  });
 });
 
 /**
@@ -1108,5 +1132,18 @@ describe('memoryIn', () => {
     const first = s.memoryIn('CS');
     first[0x100] = 0xff;
     expect(s.memoryIn('CS')[0x100]).not.toBe(0xff);
+  });
+});
+
+describe('which engine a session is', () => {
+  it('each session says, rather than the caller re-deriving it from the URL', () => {
+    // The lab falls back to the legacy session for programs the frontend
+    // compilers produce, because those never go through either assembler. A
+    // panel that asked the URL instead of the session would offer a segment
+    // picker over an engine that has only one memory, so which engine this is
+    // belongs on the session.
+    for (const engine of ENGINES) {
+      expect(session(engine, 'HLT').engine, engine).toBe(engine);
+    }
   });
 });
