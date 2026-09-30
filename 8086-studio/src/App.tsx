@@ -1649,9 +1649,16 @@ export function App() {
     setCompilationResult(result);
     
     if (result.success && result.program) {
-      initializeDebugSession(result.program, 'editor');
+      // Through the selected engine, like the Run path below it. Without this the
+      // Debug button quietly stepped the legacy whatever the engine control said,
+      // because the fallback inside `initializeDebugSession` builds a legacy
+      // session -- so on this one path the control looked like it did nothing. A
+      // program the selected engine will not assemble keeps the legacy session,
+      // which is exactly what happened here before.
+      const { session } = createSession(engine, result.assembly);
+      initializeDebugSession(result.program, 'editor', session ?? undefined);
     }
-  }, [initializeDebugSession, isCompiling, sourceCode, sourceLanguage]);
+  }, [engine, initializeDebugSession, isCompiling, sourceCode, sourceLanguage]);
 
   // Home View
   if (viewMode === 'home') {
