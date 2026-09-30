@@ -38,7 +38,9 @@ import { createInitialState, ProgramOutput } from '@/emulator/cpu';
 import { formatProgramOutput, runSourceToPanelText } from '@/lab/run-output';
 import { assemble } from '@/emulator/assembler';
 import { AssembledProgram, CPUState, Registers } from '@/types/cpu';
-import { createSession, engineFromQuery, legacySession, type DebugSession } from '@/lab/execution-engine';
+import { createSession, legacySession, type DebugSession, type EngineId } from '@/lab/execution-engine';
+import { engineUrl, resolveEngine, writeStoredEngine } from '@/lab/engine-choice';
+import { EngineToggle } from '@/components/EngineToggle';
 import { ASSEMBLY_DEMOS } from '@/lab/demos';
 import { createInitialPerformanceMetrics, updatePerformanceMetrics } from '@/lab/performance';
 import {
@@ -335,6 +337,14 @@ export function App() {
   const [isCompiling, setIsCompiling] = useState(false);
   const [debugOrigin, setDebugOrigin] = useState<DebugOrigin>('editor');
 
+  // Which engine runs the program. Resolved once, on load, from the URL, then the
+  // saved choice, then the default -- see `resolveEngine`. Held in state rather
+  // than read from the URL at each use so that every view agrees, and so that
+  // pressing the toggle is a single change rather than a navigation.
+  const [engine, setEngine] = useState<EngineId>(() =>
+    resolveEngine(window.location.search, window.localStorage),
+  );
+
   // Debug state
   const [debugState, setDebugState] = useState<CPUState>(createInitialState);
   const [debugOutput, setDebugOutput] = useState<ProgramOutput[]>([]);
@@ -518,6 +528,54 @@ export function App() {
     setDebugStatus('Ready to step through the program.');
     setViewMode('debug');
   }, []);
+
+  /**
+   * Switch engines, and put the choice somewhere it will outlast the session.
+   *
+   * Both the URL and `localStorage` are updated. The URL so that a reload keeps
+   * the choice and so the address bar always says which engine is running, and
+   * `localStorage` because BrainBox reaches this studio by handing the whole
+   * window over to it, which drops the query string it was given: someone who
+   * arrived through BrainBox with `?engine=v2` and then picked Legacy would be
+   * sent back to v2 on their next visit, with no way to see or argue with why.
+   * Storage is per origin, so the studio's own origin is the only place the
+   * choice can be kept.
+   *
+   * A debug session is not carried across the switch. Its panels are built from
+   * one engine's machine -- a 4 KB flat image against a 64 KB one, offsets against
+   * physical addresses -- so leaving it on screen under a toggle that now reads
+   * the other way would be showing one engine's state while claiming to be the
+   * other. The session is dropped and the view it was opened from is restored,
+   * with a note saying why, rather than left to look broken.
+   */
+  const changeEngine = useCallback((next: EngineId) => {
+    setEngine(next);
+    writeStoredEngine(next, window.localStorage);
+    // Rebuilt from the path rather than handed the query on its own: `engineUrl`
+    // returns '' for the default, and `replaceState('')` resolves against the
+    // current URL, which would leave the old `?engine=v2` sitting there and make
+    // the toggle look stuck.
+    const query = engineUrl(window.location.search, next);
+    window.history.replaceState(
+      null,
+      '',
+      `${window.location.pathname}${query}${window.location.hash}`,
+    );
+
+    if (debugSession === null) {
+      return;
+    }
+    setDebugSession(null);
+    setDebugInitialState(null);
+    setViewMode(debugOrigin);
+    // Said in the output panel rather than in `debugStatus`, because that is only
+    // rendered inside the debug view being left -- the note has to be visible in
+    // the view that is actually returned to.
+    setEditorTab('output');
+    setRunOutput(
+      `Switched to the ${next} engine. The debug session was running on the other engine, so it has been closed rather than relabelled. Press Debug to start one here.`,
+    );
+  }, [debugOrigin, debugSession]);
 
   const seekTimelineToIndex = useCallback((targetIndex: number) => {
     if (debugSnapshots.length === 0) {
@@ -1263,7 +1321,7 @@ export function App() {
       if (session.asmCode.trim()) {
         // Through the selected engine, like every other path into the debugger,
         // so an imported replay lands on the engine the URL is asking for.
-        const built = createSession(engineFromQuery(window.location.search), session.asmCode);
+        const built = createSession(engine, session.asmCode);
         if (built.session !== null && built.diagnostics.length === 0) {
           restoredSession = built.session;
           restoredProgram = assemble(session.asmCode);
@@ -1400,7 +1458,7 @@ export function App() {
     // The panel text is assembled in `runSourceToPanelText`; the only part that
     // needs a browser is the prompt for port input, which is passed in so the rest
     // of the path stays testable without a DOM.
-    return runSourceToPanelText(engineFromQuery(window.location.search), source, (port, index) => {
+    return runSourceToPanelText(engine, source, (port, index) => {
       const raw = window.prompt(`Input required for IN port ${port} (#${index})`, '0');
       if (raw === null) {
         return { kind: 'cancelled' };
@@ -1507,7 +1565,6 @@ export function App() {
     setCompilationResult(result);
     
     if (result.success && result.assembly) {
-      const engine = engineFromQuery(window.location.search);
       const { session, diagnostics } = createSession(engine, result.assembly);
       if (session === null) {
         const errorStr = diagnostics.map((d) => `Line ${d.line}: ${d.message}`).join('\n');
@@ -1789,6 +1846,7 @@ export function App() {
           </div>
           
           <div className="flex flex-wrap items-center gap-2">
+            <EngineToggle engine={engine} onChange={changeEngine} />
             <Button 
               variant="secondary" 
               size="sm" 
@@ -2018,7 +2076,7 @@ print "Hello!"`}</pre>
     // the same messages; on the new engine it is the strict 8086 one, which is
     // the point of selecting it.
     const debugAsmSource = (source: string, demoId: string | null) => {
-      const { session, diagnostics } = createSession(engineFromQuery(window.location.search), source);
+      const { session, diagnostics } = createSession(engine, source);
       if (session === null || diagnostics.length > 0) {
         setRunOutput(`Error:\n${diagnostics.map((diagnostic) => `Line ${diagnostic.line}: ${diagnostic.message}`).join('\n')}`);
         return;
@@ -2064,6 +2122,7 @@ print "Hello!"`}</pre>
           </div>
           
           <div className="flex flex-wrap items-center gap-2">
+            <EngineToggle engine={engine} onChange={changeEngine} />
             <Button 
               variant="success" 
               size="sm" 
@@ -2216,6 +2275,7 @@ print "Hello!"`}</pre>
           </div>
           
           <div className="flex items-center gap-2">
+            <EngineToggle engine={engine} onChange={changeEngine} />
             <Button
               variant="secondary"
               size="sm"
