@@ -1248,7 +1248,20 @@ export interface ProgramOutput {
   value: number;
 }
 
-function captureProgramOutput(state: CPUState, instruction: Instruction): ProgramOutput[] {
+/**
+ * What one instruction outputs, according to the emulator.
+ *
+ * Exported because the debugger needs the same answer and had a second, weaker
+ * copy of it: one that knew about `OUT` and not about `INT 21h`. That left a
+ * program printing correctly when the lab ran it to completion and printing
+ * nothing when a person stepped through it, which is the mode someone uses when
+ * they want to watch a program. One function, asked by both.
+ *
+ * `OUT`/`OUTC` take a register operand and yield its value -- a `number` for
+ * `OUT`, a `char` for `OUTC` -- and `INT 21h` yields a character for AH=02h and
+ * the `$`-terminated string at DS:DX for AH=09h.
+ */
+export function captureProgramOutput(state: CPUState, instruction: Instruction): ProgramOutput[] {
   const opcode = instruction.opcode.toUpperCase();
   const operand = instruction.operands[0] ?? '';
   const register = parseRegisterOperand(operand);

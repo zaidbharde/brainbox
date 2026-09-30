@@ -57,7 +57,13 @@ const PROGRAM = [
   'far:',
   '  MOV BX, 1',
 ].join('\n');
-const PRINT_PROGRAM = ['MOV DX, msg', 'MOV AH, 09h', 'INT 21h', 'HLT', 'msg DB "Ok$"'].join('\n');
+// `OFFSET` is load-bearing, not decoration. A bare label is read by the legacy as
+// a *load* of the word stored at that address rather than as the address, so
+// `MOV DX, msg` leaves DX holding the message's own bytes and the program prints
+// from wherever that lands -- which differs between the run path and the step
+// path. The new assembler rejects the bare form. `OFFSET` is the one spelling
+// both accept, and it means the same thing to both.
+const PRINT_PROGRAM = ['MOV DX, OFFSET msg', 'MOV AH, 09h', 'INT 21h', 'HLT', 'msg DB "Ok$"'].join('\n');
 
 describe('engineFromQuery', () => {
   it('selects the new engine only for engine=v2', () => {
@@ -283,6 +289,35 @@ describe('the two engines agree where both are defined', () => {
     'HLT',
   ].join('\n');
 
+  it('shows the same printed text while stepping, on both engines', () => {
+    // This used to be a recorded divergence rather than a test of agreement. The
+    // legacy's step diagnostics knew only about OUT and OUTC while the emulator
+    // behind it also knew about INT 21h, so the two paths disagreed: a DOS print
+    // string showed in the output panel after a Run and showed nothing at all
+    // while stepping, which is the mode someone uses precisely to watch a
+    // program. One function answers it now and both paths ask it.
+    expect(printed('v2', PRINT_PROGRAM)).toBe('Ok');
+    expect(printed('legacy', PRINT_PROGRAM)).toBe('Ok');
+  });
+
+  it('prints a DOS string with no padding on either engine', () => {
+    // Also formerly a recorded divergence: the legacy's run padded the message
+    // with a run of NUL characters. That turned out to be the fixture's fault and
+    // not the engine's -- `MOV DX, msg` with a bare label is read by the legacy as
+    // a load of the word stored at `msg`, so DX held the message's own bytes and
+    // the run printed from an address that happened to be zeroes. With `OFFSET`
+    // both engines print exactly the two characters, and the padding is gone from
+    // both the run and the step path.
+    const text = (engine: EngineId): string => {
+      const { output } = session(engine, PRINT_PROGRAM).runToCompletion([], 10_000);
+      return output
+        .map((entry) => (entry.type === 'char' ? String.fromCharCode(entry.value) : String(entry.value)))
+        .join('');
+    };
+    expect(text('legacy')).toBe('Ok');
+    expect(text('v2')).toBe('Ok');
+  });
+
   it('computes the same registers', () => {
     const legacy = runToEnd('legacy', program).state;
     const v2 = runToEnd('v2', program).state;
@@ -354,15 +389,6 @@ describe('where the engines genuinely differ', () => {
     expect(session('v2', 'HLT\n').state.memory.length).toBe(0x10000);
   });
 
-  it('reports printed text only on the new engine, which fixes a legacy gap', () => {
-    // The legacy's step diagnostics know only about OUT and OUTC, so DOS print
-    // string shows nothing in the output panel even though a whole-program run
-    // collects it. The legacy is left alone deliberately, so this records the
-    // difference instead of pretending the two match.
-    expect(printed('v2', PRINT_PROGRAM)).toBe('Ok');
-    expect(printed('legacy', PRINT_PROGRAM)).toBe('');
-  });
-
   it('maps hand-written assembly to source lines only on the new engine', () => {
     // The legacy's source map is built from `_SRC_` labels emitted by the
     // structured compiler, so for assembly typed into the editor it is empty and
@@ -371,28 +397,6 @@ describe('where the engines genuinely differ', () => {
     const source = 'MOV AX, 1\nMOV BX, 2\nHLT\n';
     expect(session('v2', source).sourceLineAt(0x100)).toBe(1);
     expect(session('legacy', source).sourceLineAt(0)).toBeNull();
-  });
-
-  it('pads a print-string run with NULs on the legacy only', () => {
-    // The Run button's output panel shows this stream as it comes, so the legacy
-    // puts a line of NUL characters in front of the message it printed, while the
-    // new engine prints just the two characters. The Run path is wired to both
-    // engines now, so this is visible on either depending on the URL parameter.
-    //
-    // It is the legacy's own behaviour and is left alone on purpose: the Run
-    // button called the same `runProgram` before the switch existed, so this is
-    // not something the wiring introduced. Pinned so that a change to either
-    // engine which quietly removes it is noticed, and so the two are not assumed
-    // to agree.
-    const text = (engine: EngineId): string => {
-      const { output } = session(engine, PRINT_PROGRAM).runToCompletion([], 10_000);
-      return output
-        .map((entry) => (entry.type === 'char' ? String.fromCharCode(entry.value) : String(entry.value)))
-        .join('');
-    };
-
-    expect(text('v2')).toBe('Ok');
-    expect(text('legacy')).toMatch(/^\u0000+Ok$/);
   });
 
   it('takes input in different shapes, so only the legacy prompts', () => {
@@ -784,24 +788,24 @@ describe('triggerSoftwareInterrupt', () => {
     }
   });
 
-  it('the new engine reads AH: 02h prints one character where the legacy prints none', () => {
-    // One vector, two engines, one register, two different outcomes. This is the
-    // divergence in its smallest form, and it is a property of the engines'
-    // interrupt policies rather than of the adapter that raised it.
+  it('both engines read AH: 02h and print one character', () => {
+    // Also formerly a divergence, and one worth closing carefully: the legacy
+    // accepted 02h, stepped over it, and reported no output, while the new engine
+    // printed the character. Both engines have the same service in the emulator --
+    // it was only the debugger's own output capture that stopped short -- so a
+    // manually raised 21h now reports through both, which is the same code path a
+    // stepped-through program takes and so is worth asserting here as well as in
+    // the smoke tests.
     //
     // 02h and not 09h: 09h prints a `$`-terminated string out of memory, so in a
     // zeroed segment it runs to the end of the segment and emits 65536 NULs --
     // which is right, and useless as a test of "did the service run".
-    const printed = afterRaising('v2', 'MOV DL, 0x41\nMOV AH, 0x02', 0x21);
-    expect(printed.after.halted, 'printing does not terminate').toBe(false);
-    expect(printed.diagnostics.output.length, 'and it printed the character').toBe(1);
-
-    // The legacy accepts 02h and steps over it without printing. It has the
-    // service in the sense that the vector does not trap; it has nothing behind
-    // it, so a program relying on 02h to print runs and produces no output.
-    const legacy = afterRaising('legacy', 'MOV DL, 0x41\nMOV AH, 0x02', 0x21);
-    expect(legacy.after.halted, 'accepted, so not a trap').toBe(false);
-    expect(legacy.diagnostics.output.length, 'but nothing came out').toBe(0);
+    for (const engine of ENGINES) {
+      const printed = afterRaising(engine, 'MOV DL, 0x41\nMOV AH, 0x02', 0x21);
+      expect(printed.after.halted, `${engine} printing does not terminate`).toBe(false);
+      expect(printed.diagnostics.output.length, `${engine} printed the character`).toBe(1);
+      expect(printed.diagnostics.output[0]?.value, `${engine} and it was the right one`).toBe(0x41);
+    }
   });
 
   it('an unsupported service stops the new engine and traps the legacy', () => {

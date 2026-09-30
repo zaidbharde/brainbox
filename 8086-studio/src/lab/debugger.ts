@@ -1,4 +1,4 @@
-import { executeInstruction, getFlags, parseImmediate, parseRegister, ProgramOutput } from '@/emulator/cpu';
+import { captureProgramOutput, executeInstruction, getFlags, parseImmediate, parseRegister } from '@/emulator/cpu';
 import { CPUState, Instruction, Registers } from '@/types/cpu';
 import { estimateInstructionCycles } from '@/lab/performance';
 import { ExecuteStepParams, StepDiagnostics } from '@/lab/types';
@@ -8,43 +8,6 @@ const REGISTER_NAMES: (keyof Registers)[] = ['AX', 'BX', 'CX', 'DX', 'CS', 'DS',
 const MAX_MEMORY_WORD_CHANGES = 24;
 const MEMORY_SIZE = 4096;
 
-function captureInstructionOutput(state: CPUState, instruction: Instruction): ProgramOutput[] {
-  const opcode = instruction.opcode.toUpperCase();
-  if (opcode !== 'OUT' && opcode !== 'OUTC') {
-    return [];
-  }
-
-  const target = instruction.operands[0] ?? '';
-  const register = parseRegister(target);
-  if (register) {
-    if (opcode === 'OUT') {
-      return [{ type: 'number', value: state.registers[register] }];
-    }
-
-    return [{ type: 'char', value: state.registers[register] & 0xff }];
-  }
-
-  const upper = target.trim().toUpperCase();
-  if (opcode === 'OUT' || opcode === 'OUTC') {
-    const byteMap: Record<string, { word: keyof Registers; shift: number }> = {
-      AL: { word: 'AX', shift: 0 },
-      AH: { word: 'AX', shift: 8 },
-      BL: { word: 'BX', shift: 0 },
-      BH: { word: 'BX', shift: 8 },
-      CL: { word: 'CX', shift: 0 },
-      CH: { word: 'CX', shift: 8 },
-      DL: { word: 'DX', shift: 0 },
-      DH: { word: 'DX', shift: 8 },
-    };
-    const byteRegister = byteMap[upper];
-    if (byteRegister) {
-      const value = (state.registers[byteRegister.word] >> byteRegister.shift) & 0xff;
-      return [{ type: opcode === 'OUT' ? 'number' : 'char', value }];
-    }
-  }
-
-  return [];
-}
 
 function diffRegisters(previous: Registers, next: Registers): (keyof Registers)[] {
   return REGISTER_NAMES.filter((registerName) => previous[registerName] !== next[registerName]);
@@ -211,7 +174,7 @@ export function executeStepWithDiagnostics({
   stepStartedAtMs,
 }: ExecuteStepParams): StepDiagnostics {
   const memoryAccesses = detectMemoryAccesses(state, instruction);
-  const output = captureInstructionOutput(state, instruction);
+  const output = captureProgramOutput(state, instruction);
   const nextState = executeInstruction(state, instruction, labels);
   const changedRegisters = diffRegisters(state.registers, nextState.registers);
   const changedFlags = diffFlags(state.registers.FLAGS, nextState.registers.FLAGS);
