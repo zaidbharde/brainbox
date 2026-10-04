@@ -180,22 +180,32 @@ message on both engines. The padding above is a property of the bare-label spell
 not of a print-string run in general — a reading that this document previously got
 wrong, in the other direction, by treating it as unavoidable.
 
-### A single-quoted string is a data initializer on the new engine only
+### A single-quoted string used to be a data initializer on the new engine only — now both
 
-The legacy has no single-quoted string support at all:
+The legacy used to accept only the double-quoted spelling:
 
 ```asm
 msg DB 'Hello 8086$'
 ```
 
-fails to assemble with `Invalid data initializer: 'Hello 8086$'`. It wants
-`msg DB "Hello 8086$"`. This is a legacy limitation and is left alone: the legacy
-assembler is not being extended, and the report is that a person who writes
-single quotes gets a clear error rather than a silent wrong answer.
+failed to assemble with `Invalid data initializer: 'Hello 8086$'`, while
+`msg DB "Hello 8086$"` worked. The error named the right line and the wrong cause:
+the string was not invalid, it was spelled with the quote character the assembler
+did not recognise. Since single quotes are what most people type and what textbooks
+print, a valid program assembled on one engine and not on the other, decided by the
+toggle.
 
-The new engine accepts either quote, as MASM does. It did not always, and the
-version that did not is the most confusing failure in this file's history — see
-below.
+**This is fixed.** Both engines now read either quote, as MASM does, and the two
+spellings of one declaration assemble to the same bytes. The fix was in three places
+in `src/emulator/assembler.ts`, all of which were checking for `"` only:
+`parseStringLiteral` (what a string was), `splitOperands` (what a comma separated),
+and `stripInlineComment` (what a `;` started). Fixing only the first would have made
+the reported program work and left `DB 'a,b'` assembled as two strings and
+`DB 'x ; y'` truncated at the semicolon.
+
+The closing character now has to match the opening one, so a stray apostrophe inside
+a double-quoted string does not end it early. An unterminated or mismatched string is
+still an error, with the line number.
 
 ### A bare label in `MOV` is a memory read on the legacy, and is rejected by the new engine
 
@@ -210,6 +220,53 @@ This is **not** a difference in where the two engines keep declared data. It is 
 a data-segment difference at all: the legacy does lay a `DATA SEGMENT` out, at
 `0100h`, and the new engine packs its segments elsewhere. `MOV SI, OFFSET values`
 finds the array correctly on both and both sum it to the same total. Use `OFFSET`.
+
+### A bare memory store defaults to word width on the legacy
+
+Discovered while writing the `arrays-strings-reverse` example, which printed nothing
+and then printed garbage. On the legacy, a store whose width is not stated writes two
+bytes:
+
+```asm
+buf DB 255, 255, 255, 255
+MOV BX, 0100h
+MOV AL, 90
+MOV [BX], AL        ; writes 5A 00 — the second byte clobbers buf+1
+MOV BYTE PTR [BX], AL ; writes 5A    — one byte, correct
+```
+
+The same happens for `[SI]`, `[DI]` and a direct offset, and for any byte register
+(`MOV [SI], BL` has the same problem). Reads are unaffected, and a word store is
+correct: `MOV [SI], AX` writes two bytes as it should.
+
+**The new engine is right.** MASM requires the size to be known at the point of the
+store, and a register operand is the usual way to supply it; the legacy is inferring
+word width from the absence of information and then zero-filling the extra byte.
+
+Why it survived in the suite until now: it is nearly silent in the common case. A copy
+loop that walks a buffer forwards gets **every byte it copied** right, because each
+iteration overwrites the byte the previous one clobbered — so the buffer looks
+correct. What it still gets wrong is the single byte immediately past the end, which
+is zeroed rather than left alone. That byte matters as soon as something else lives
+there, and it is exactly what `arrays-strings-reverse` does: its terminator is the
+byte after the buffer. A loop that walks *backwards* fails outright, since the stray
+zeros land on data that has already been written.
+
+`src/engine/cpu/store-width.test.ts` covers all of this: `BYTE PTR` and `WORD PTR` on
+both engines as requirements, and the bare store pinned at its current legacy
+behaviour so a change there gets noticed rather than discovered later.
+
+Not fixed, for the same reason as everything else in this section: it changes what
+existing legacy programs do.
+
+### The engines disagree about `[SP+n]`
+
+The legacy reads a procedure argument off the stack at `[SP+4]`; the new engine does
+not implement the displacement, and a loop reading it runs until the step limit and is
+cancelled. There is no spelling of a stack argument that works on both. The example
+library's procedure example therefore demonstrates `CALL`/`RET` and callee-saved
+registers instead of parameters, which is honest about the difference rather than
+picking the engine that happens to work.
 
 ## Bugs that are fixed, and how each was found
 
@@ -310,6 +367,25 @@ finds the array correctly on both and both sum it to the same total. Use `OFFSET
   debugger. So a DOS print showed after a Run and not while stepping, on the legacy
   only. One function answers for both now. The golden trace did not move: every output
   line in it comes from `OUT` or `OUTC`, and no traced program prints through DOS.
+- **The legacy assembler read only the double-quoted spelling of a string.** The one
+  bug in this list that was in the *old* engine rather than the new one, and the one
+  that made the engine toggle look like the deciding factor in a hello-world bug
+  report: `msg DB 'Hello World!$'` failed with
+  `Invalid data initializer: 'Hello World!$'` on legacy and worked on v2, so the same
+  valid program ran or did not depending on which engine was selected.
+
+  Three checks in `src/emulator/assembler.ts` were comparing against `"` only:
+  `parseStringLiteral`, `splitOperands` and `stripInlineComment`. All three had to
+  change, and that is the part worth remembering — fixing only `parseStringLiteral`
+  makes the reported program work while leaving `DB 'a,b'` assembled as two separate
+  strings and `DB 'x ; y'` truncated at the semicolon. The scanners now track the
+  *opening* quote character instead of toggling on any quote, so an apostrophe inside
+  a double-quoted string does not end it early, and a closing character that does not
+  match the opening one is an error rather than a silently truncated string.
+
+  Found by reading the error message instead of the code: it named the line and was
+  accurate about it, but "invalid" was wrong, and the reason it was wrong was a single
+  character comparison. `src/emulator/legacy-strings.test.ts` covers all three sites.
 
 The first two were found by `compatibility.test.ts`, which runs the shipped samples on
 both engines and compares the data they leave behind. The samples had been passing
@@ -433,7 +509,7 @@ legacy alone on principle. `npm test` and `npm run build` are both green.
 ## How to check any of this still holds
 
 ```bash
-npm test          # 2077 tests, 28 files
+npm test          # 2112 tests, 29 files
 npm run build     # vite build
 npm run typecheck # the one accepted error above
 ```

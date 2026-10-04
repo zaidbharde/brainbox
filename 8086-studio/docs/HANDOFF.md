@@ -15,7 +15,7 @@ the gaps that remain are listed at the end, and none of them is the debugger.
 
 ```bash
 cd 8086-studio
-npm test          # 2041 tests, 27 files
+npm test          # 2138 tests, 31 files
 npm run dev       # then open http://localhost:5173
 ```
 
@@ -170,13 +170,16 @@ comparisons mean something: a shared helper would make them agree by constructio
 ## What is verified, and by what
 
 ```
-2077 tests, 28 files
+2138 tests, 31 files
   effects.test.ts                326   every instruction's memory and register effect
   executable-coverage.test.ts   320   every table entry assembles and executes
   isa-boundary.test.ts          172
   cpu.test.ts                   169   instruction behaviour
   table.test.ts                 137   the table itself
   compatibility.test.ts         101   every shipped compiler sample and lab demo, both engines
+  legacy-strings.test.ts         33   the legacy's string literals, at both quote characters
+  examples.test.ts               18   every program in the example library, on both engines
+  store-width.test.ts              8   how wide a store is, and the one place it is wrong
   decoder / encoder fixtures    431   231 decoding every encoding, 200 source spellings
   assembler + assembler tests    69   assemble, lexer, legacy differential
   segment-ops / return-forms      54   segment PUSH/POP, far returns
@@ -240,8 +243,51 @@ lexer test passes happily while the program prints nothing. That test now assert
 for both engines: the Output panel's text is exactly the concatenated step output,
 Run and single-step agree, `AH=02h` and `AH=09h` agree, and `OUT`/`OUTC` agree.
 
-The legacy rejects `DB '...'` with `Invalid data initializer`. That is unchanged and
-documented, not fixed: the legacy is meant to keep its behaviour.
+The legacy used to reject `DB '...'` with `Invalid data initializer` while v2 accepted
+it. **That is now fixed**: both engines read either quote character, as MASM does, so
+the quote someone typed no longer decides whether their program assembles. Three
+`"`-only checks in `src/emulator/assembler.ts` were responsible -- what a string was,
+what a comma separated, and what a `;` started -- and all three had to change or
+`DB 'a,b'` and `DB 'x ; y'` stayed broken behind a fixed hello world. See
+`src/emulator/legacy-strings.test.ts`.
+
+The legacy otherwise means to keep its behaviour; this one was a bug in it, not a
+design difference.
+
+
+## The example library
+
+`src/lab/examples.ts` is a catalog of verified programs, organised by category, with
+`src/lab/examples.test.ts` running every one of them. There is no backend to put it
+in: the app has no server, no API client and no network calls at all, which is why
+`demos.ts` is a static array in the same directory. The convention it follows is the
+one already there — a typed module beside the emulator, imported by a panel.
+`src/components/lab/ExampleLibrary.tsx` renders it and takes the same three callbacks
+`DemoLibrary` does, so both panels behave the same way in the editor. Where a program
+already existed as a demo its source is imported rather than copied, so the two lists
+cannot drift apart.
+
+Each entry carries a stable ID, title, category, description, source, the engines it
+is verified on, and the exact text it must print. The test assembles and runs it on
+each engine it claims and checks the output, so an entry that stopped compiling or
+that only works on one engine fails there rather than in front of somebody trying to
+learn from it.
+
+Building it turned up two engine bugs that the existing suite had not reached, both
+found by writing an example and having it produce the wrong answer:
+
+- **The legacy defaults a bare memory store to word width.** `MOV [SI], AL` writes the
+  byte *and* a zero over the following byte; only `MOV BYTE PTR [SI], AL` stores one
+  byte. Reads are unaffected, and a word store (`MOV [SI], AX`) is correct. Nearly
+  silent: a forward copy loop still gets every byte it copied right, because each
+  iteration overwrites the byte the last one clobbered — what it breaks is the single
+  byte past the end, and any backward loop. `src/engine/cpu/store-width.test.ts` covers
+  it. Left unfixed and documented rather than fixed in passing, since it is a behaviour
+  change to the engine the brief said to preserve.
+- **The two engines disagree about `[SP+n]`.** Legacy reads a parameter off the stack;
+  v2 loops until it hits the step limit. The library's procedure example uses `CALL`
+  /`RET` and a callee-saved register instead, which is honest about the difference
+  rather than quietly picking the engine that works.
 
 
 ## The commits, in the order they were meant to be read
@@ -333,7 +379,6 @@ them. Tracked in `NOT_ASSEMBLABLE`, asserted to still be unreachable.
 Recorded here so nobody spends the time re-deriving them. Each is in
 `docs/engine-v2-divergences.md` with a test that says so.
 
-- `DB '...'` is rejected by the legacy with `Invalid data initializer`. v2 accepts it.
 - A bare label in a data directive is ambiguous and both engines pick an address for
   it; the NUL padding in some samples is that, not an engine difference. `OFFSET
   label` is the portable spelling and both engines assemble it.
