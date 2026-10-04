@@ -108,15 +108,12 @@ describe('the Output panel, for a DOS print', () => {
     expect(runSourceToPanelText('v2', DOUBLE_QUOTED_HELLO_WORLD)).toContain('Hello 8086');
   });
 
-  it('shows the same text on the legacy, which rejects single quotes', () => {
-    // The legacy has no single-quoted string support and is not getting any; it
-    // says so rather than printing nothing. `docs/engine-v2-divergences.md`
-    // records it. What matters here is that the rejection is visible in the
-    // panel, which is the contrast with the v2 behaviour above.
-    const legacy = runSourceToPanelText('legacy', REPORTED_HELLO_WORLD);
-    expect(legacy).toContain('Error:');
-    expect(legacy).toContain('Invalid data initializer');
-    expect(legacy).not.toContain(SUCCESS);
+  it('shows the same text on the legacy', () => {
+    // The legacy assembler only knew the double-quoted spelling, and refused the
+    // single-quoted one as `Invalid data initializer: 'Hello 8086$'`. That was the
+    // reported bug: both engines now assemble either spelling to the same bytes,
+    // so which one a person typed stops deciding whether their program runs.
+    expect(printed(runSourceToPanelText('legacy', REPORTED_HELLO_WORLD))).toBe('Hello 8086');
   });
 
   it('shows the text of a double-quoted hello world on the legacy too', () => {
@@ -151,13 +148,15 @@ describe('the Output panel, for the reported .MODEL SMALL lab program', () => {
     expect(panel).not.toContain('no encoding of LEA');
   });
 
-  it('reports the legacy limitation on legacy, and says which engine said it', () => {
+  it('prints on legacy too, and says which engine printed it', () => {
+    // The other half of the reported bug: the legacy assembler used to reject the
+    // single-quoted string outright, so this exact program was a syntax error with
+    // the toggle on legacy and worked with it on v2.
     const result = runSourceToPanel('legacy', LAB_STYLE_HELLO_WORLD);
-    expect(result.text).toContain('Invalid data initializer');
-    expect(result.text).not.toContain(SUCCESS);
-    // Provenance is what stops this being mistaken for the v2 result. It lives on
-    // the result and in the panel header rather than inside `text`, because
-    // `text` is the program's output and gets copied out of the panel.
+    expect(printed(result.text)).toBe('Hello World!');
+    expect(result.kind).toBe('output');
+    // Provenance still matters now that both engines succeed: it is what says the
+    // text came from the engine the toggle was pointing at.
     expect(result.engine).toBe('legacy');
     expect(panelEngineLabel(result.engine)).toBe('ran on legacy');
   });
@@ -197,15 +196,27 @@ describe('the Output panel reports which engine produced the result', () => {
   });
 
   it('distinguishes a diagnostic from a run that produced output', () => {
-    expect(runSourceToPanel('legacy', "msg DB 'x'").kind).toBe('diagnostics');
-    expect(runSourceToPanel('v2', "msg DB 'x'").kind).toBe('output');
+    // A bare identifier is not a value, so both engines refuse it. This used to be
+    // pinned with the legacy engine and a single-quoted string, back when that was
+    // the one thing the two disagreed about; now it is a real error on both, which
+    // keeps the test about `kind` rather than about a divergence that is gone.
+    const source = 'msg DB notAnIdentifier';
+    expect(runSourceToPanel('legacy', source).kind).toBe('diagnostics');
+    expect(runSourceToPanel('v2', source).kind).toBe('diagnostics');
+    expect(runSourceToPanel('v2', "msg DB 'ok$'").kind).toBe('output');
   });
 
-  it('reports the legacy limitation as a diagnostic and not as a successful run', () => {
-    const result = runSourceToPanel('legacy', LAB_STYLE_HELLO_WORLD);
-    expect(result.kind).toBe('diagnostics');
-    expect(result.diagnostics.length).toBeGreaterThan(0);
-    expect(result.text).not.toContain(SUCCESS);
+  it('reports a genuine assembly failure as a diagnostic and not as a successful run', () => {
+    // The invariant behind the panel: a program that would not assemble must never
+    // be able to show a success line, whichever engine refused it.
+    for (const engine of ['legacy', 'v2'] as const) {
+      const result = runSourceToPanel(engine, 'msg DB notAnIdentifier');
+      expect(result.kind).toBe('diagnostics');
+      expect(result.diagnostics.length).toBeGreaterThan(0);
+      expect(result.text).not.toContain(SUCCESS);
+      // The message has to name the line, or it is not something to act on.
+      expect(result.diagnostics[0].line).toBe(1);
+    }
   });
 
   it('names each engine in the label the panel header shows', () => {

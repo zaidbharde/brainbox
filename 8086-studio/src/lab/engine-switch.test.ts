@@ -8,7 +8,7 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { runSourceToPanel } from '@/lab/run-output';
+import { panelEngineLabel, runSourceToPanel } from '@/lab/run-output';
 import {
   engineSwitchedNote,
   isStaleForEngine,
@@ -111,10 +111,20 @@ describe('a panel knows whether it is describing the selected engine', () => {
     // between. Before the dispatch fix the answer depended on which engine had
     // been selected when the page loaded, which is what "without a page reload"
     // is here to exclude.
+    //
+    // This used to prove it by watching the two engines disagree: the legacy
+    // refused the single-quoted string the v2 engine accepted, so identical text
+    // would have meant the call was ignored. They agree now that the legacy has
+    // been taught single quotes, so the proof has to come from the provenance --
+    // each answer names the engine that was asked for it.
     const engines: EngineId[] = ['legacy', 'v2'];
-    const texts = engines.map((engine) => runSourceToPanel(engine, LAB_STYLE_HELLO_WORLD).text);
-    expect(texts[0]).toContain('Invalid data initializer');
-    expect(texts[1]).toContain('Hello World!');
-    expect(texts[0]).not.toBe(texts[1]);
+    const results = engines.map((engine) => runSourceToPanel(engine, LAB_STYLE_HELLO_WORLD));
+    for (const [index, result] of results.entries()) {
+      expect(result.engine).toBe(engines[index]);
+      expect(result.text).toContain('Hello World!');
+    }
+    // The one thing the panel shows that is per-engine, and would differ if the
+    // stale-closure bug were back.
+    expect(panelEngineLabel(results[0].engine)).not.toBe(panelEngineLabel(results[1].engine));
   });
 });

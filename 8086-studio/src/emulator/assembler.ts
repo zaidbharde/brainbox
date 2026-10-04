@@ -37,14 +37,34 @@ type DataSymbol = {
   size: 1 | 2;
 };
 
+/**
+ * The quote character at `index`, or null if there isn't one.
+ *
+ * MASM accepts either `'` or `"` around a string in a data directive, and both
+ * engines here agree on that -- but this assembler had three places that only
+ * knew about `"`, which is why `msg DB 'Hello World!$'` was rejected while
+ * `msg DB "Hello World!$"` worked. See `parseStringLiteral`.
+ *
+ * The *opening* character is what a quoted run is closed by, so the scanners below
+ * track it rather than toggling on any quote. Toggling means `DB "it's"` ends the
+ * string at the apostrophe, and then the trailing `"` opens a second one.
+ */
+function quoteCharAt(text: string, index: number): '"' | "'" | null {
+  const ch = text[index];
+  return ch === '"' || ch === "'" ? ch : null;
+}
+
 function stripInlineComment(text: string): string {
-  let inQuote = false;
+  let quote: '"' | "'" | null = null;
   for (let i = 0; i < text.length; i += 1) {
     const ch = text[i];
-    if (ch === '"') {
-      inQuote = !inQuote;
+    const quoted = quoteCharAt(text, i);
+    if (quoted !== null) {
+      if (quote === null) quote = quoted;
+      else if (quote === quoted) quote = null;
+      continue;
     }
-    if (ch === ';' && !inQuote) {
+    if (ch === ';' && quote === null) {
       return text.slice(0, i);
     }
   }
@@ -59,16 +79,18 @@ function splitOperands(input: string): string[] {
   const parts: string[] = [];
   let current = '';
   let bracketDepth = 0;
-  let quote = false;
+  let quote: '"' | "'" | null = null;
 
   for (let i = 0; i < input.length; i += 1) {
     const ch = input[i];
-    if (ch === '"') {
-      quote = !quote;
+    const quoted = quoteCharAt(input, i);
+    if (quoted !== null) {
+      if (quote === null) quote = quoted;
+      else if (quote === quoted) quote = null;
       current += ch;
       continue;
     }
-    if (!quote) {
+    if (quote === null) {
       if (ch === '[') {
         bracketDepth += 1;
       } else if (ch === ']') {
@@ -160,9 +182,29 @@ function isValidImmediate(operand: string): boolean {
   return parseImmediate(operand) !== null;
 }
 
+/**
+ * The bytes of a quoted string, or null if `raw` is not one.
+ *
+ * MASM accepts either quote character, so `msg DB 'Hello'` and `msg DB "Hello"`
+ * are the same declaration. This recognised only `"`, which made the single-quoted
+ * form the one spelling of a valid program that this assembler refused --
+ * `Invalid data initializer: 'Hello World!$'` -- and single quotes are what most
+ * people type. It also meant the two spellings of the same data assembled to
+ * different things, so a program that worked stopped working when a quote was
+ * changed.
+ *
+ * The closing character has to match the opening one, so a stray apostrophe inside
+ * a double-quoted string does not end it early and leave a `'` behind to be
+ * reported as a bad initializer.
+ *
+ * Whether this is a character or a string is not decided here. In a data directive
+ * both mean the same bytes -- `'A'` is one byte and `'AB'` is two -- which is also
+ * how the new assembler reads them.
+ */
 function parseStringLiteral(raw: string): number[] | null {
   const text = raw.trim();
-  if (!text.startsWith('"') || !text.endsWith('"')) {
+  const opener = quoteCharAt(text, 0);
+  if (opener === null || text.length < 2 || text[text.length - 1] !== opener) {
     return null;
   }
 

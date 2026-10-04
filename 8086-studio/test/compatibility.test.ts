@@ -121,13 +121,18 @@ describe("shipped lab demos", () => {
  * test: `src/lab/run-output.test.ts` pins the reported single-quoted spelling, and
  * this pins the one that ships.
  *
- * The shipped source uses double quotes, and that is the whole divergence. Both
- * engines agree on `.MODEL`, `.STACK`, `.DATA`, `@DATA`, a bare `LEA reg, label`
- * and `INT 21h` -- verified here rather than assumed, because the first version of
- * this fix could have made it look like the v2 assembler had gained support for
- * something the legacy never had. The only disagreement is the quoting: the legacy
- * rejects `DB 'text'` outright, which is asserted below so the day it stops
- * rejecting it, the documentation in docs/engine-v2-divergences.md gets updated.
+ * Both engines agree on `.MODEL`, `.STACK`, `.DATA`, `@DATA`, a bare
+ * `LEA reg, label` and `INT 21h` -- verified here rather than assumed, because the
+ * first version of this fix could have made it look like the v2 assembler had gained
+ * support for something the legacy never had.
+ *
+ * The one thing they used to disagree on was quoting. The legacy assembler accepted
+ * `DB "text"` and rejected `DB 'text'`, so the single-quoted spelling -- what most
+ * people type, and what textbooks print -- was refused as
+ * `Invalid data initializer: 'Hello World!$'` on legacy and accepted on v2. It is a
+ * fixed bug in the legacy now, so the two spellings of the same data assemble to the
+ * same bytes on both engines. The demo keeps the double-quoted spelling only because
+ * MASM's own documentation writes it that way.
  */
 describe("the shipped .MODEL hello world, on both engines", () => {
   const MODEL_HELLO = ASSEMBLY_DEMOS.find((demo) => demo.id === "model-hello");
@@ -145,14 +150,14 @@ describe("the shipped .MODEL hello world, on both engines", () => {
     expect(result.text).toContain("Hello World!");
   });
 
-  it("is the double-quoted spelling, so both engines accept it", () => {
+  it("is the double-quoted spelling, which is how MASM documents it", () => {
     expect(MODEL_HELLO!.source).toContain('msg DB "Hello World!$"');
-    expect(MODEL_HELLO!.source).not.toContain("msg DB 'Hello World!$'");
   });
 
-  it("still diverges from the legacy on the single-quoted spelling", () => {
-    // The divergence the shipped demo avoids, pinned so it stays a documented
-    // difference between two engines rather than a silent behaviour of one.
+  it("also prints on the single-quoted spelling, on both engines", () => {
+    // The divergence the shipped demo used to have to avoid, pinned in the
+    // direction it now goes: neither engine may treat one spelling as good and
+    // the other as a bad initializer.
     //
     // Replaced through a function, not a string: the replacement ends in `$'`,
     // which `String.replace` reads as "everything after the match" and would
@@ -162,7 +167,7 @@ describe("the shipped .MODEL hello world, on both engines", () => {
       '"Hello World!$"',
       () => "'Hello World!$'",
     );
-    expect(runSourceToPanel("legacy", singleQuoted).text).toContain("Invalid data initializer");
+    expect(runSourceToPanel("legacy", singleQuoted).text).toContain("Hello World!");
     expect(runSourceToPanel("v2", singleQuoted).text).toContain("Hello World!");
   });
 });
@@ -228,6 +233,36 @@ describe("compiler output", () => {
  * throughout, and the legacy's 16-bit flags are the 8086's apart from the AF of
  * ADC and SBB, which this code does not use.
  */
+/**
+ * The program from the bug report, byte for byte.
+ *
+ * Standard MASM/TASM hello world: `.MODEL`, `.STACK`, a single-quoted string in
+ * `.DATA`, `@DATA`, a bare `LEA`, `INT 21h` AH=09h to print and AH=4Ch to end.
+ * Kept separate from the shipped demo so that a demo edited to dodge a bug cannot
+ * quietly stop covering it.
+ */
+const REPORTED_HELLO_WORLD = [
+  ".MODEL SMALL",
+  ".STACK 100H",
+  "",
+  ".DATA",
+  "    msg DB 'Hello World!$'",
+  "",
+  ".CODE",
+  "MAIN PROC",
+  "    MOV AX, @DATA",
+  "    MOV DS, AX",
+  "",
+  "    LEA DX, msg",
+  "    MOV AH, 09H",
+  "    INT 21H",
+  "",
+  "    MOV AH, 4CH",
+  "    INT 21H",
+  "MAIN ENDP",
+  "END MAIN",
+].join("\n");
+
 describe("compiler output, run on both engines", () => {
   /** The data area the code generator addresses, from 100h up to the code. */
   function dataAddresses(assembly: string, origin: number): number[] {
@@ -278,6 +313,59 @@ describe("compiler output, run on both engines", () => {
 
   it("has samples to run", () => {
     expect(SAMPLES.length).toBeGreaterThan(0);
+  });
+
+  it("runs the reported hello world to the same result on both engines", () => {
+    // The program from the bug report, byte for byte. Before the legacy assembler
+    // learned single quotes this could not be assembled on one engine at all, so
+    // it is here to keep the two from drifting apart again on the ordinary
+    // spelling of hello world.
+    //
+    // Compared through the panel rather than through `legacyRun`/`newRun` above,
+    // and that is deliberate: those load a flat image at an `origin` chosen to put
+    // compiler-generated code above a fixed data area, which is meaningless for a
+    // `.MODEL` program that carries its own segment layout -- loading the image at
+    // 100h put the code straight over the data and both engines then agreed on
+    // nonsense. The panel is the path a person's Run button actually takes.
+    const legacy = runSourceToPanel("legacy", REPORTED_HELLO_WORLD);
+    const mine = runSourceToPanel("v2", REPORTED_HELLO_WORLD);
+
+    expect(legacy.kind, "legacy").toBe("output");
+    expect(mine.kind, "v2").toBe("output");
+    expect(mine.text).toBe(legacy.text);
+    // `Hello World!` from INT 21h AH=09h, and the run finished rather than hit
+    // the step limit -- which matters, because a program that printed the right
+    // text and then hung would still satisfy the line above.
+    expect(legacy.text).toContain("Hello World!");
+    expect(legacy.text).toContain("Program completed successfully");
+  });
+
+  it("agrees between the engines on a program with mixed initializers", () => {
+    // A `DB` line mixing numbers and strings, which only assembles correctly if a
+    // comma inside a string is told apart from a comma between initializers. The
+    // CRLF is in the output, so the two single-byte initializers in front of it
+    // have to have landed in the right order and at the right width.
+    const source = [
+      ".MODEL SMALL",
+      ".STACK 100H",
+      ".DATA",
+      "    msg DB 13, 10, 'Hello World!$'",
+      ".CODE",
+      "MAIN PROC",
+      "    MOV AX, @DATA",
+      "    MOV DS, AX",
+      "    LEA DX, msg",
+      "    MOV AH, 09H",
+      "    INT 21H",
+      "    MOV AH, 4CH",
+      "    INT 21H",
+      "MAIN ENDP",
+      "END MAIN",
+    ].join("\n");
+    const legacy = runSourceToPanel("legacy", source);
+    expect(legacy.kind, "legacy").toBe("output");
+    expect(runSourceToPanel("v2", source).text).toBe(legacy.text);
+    expect(legacy.text).toContain("\r\nHello World!");
   });
 
   it.each(SAMPLES.map((sample) => [sample.name, sample] as const))(
