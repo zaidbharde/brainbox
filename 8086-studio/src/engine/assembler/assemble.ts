@@ -184,6 +184,13 @@ export function assemble(source: string, options: AssembleOptions = {}): Assembl
     dataSegmentName: "_COM",
   };
 
+  // `@DATA`, `@CODE` and `@STACK` have to be resolvable from the first token,
+  // because `MOV AX, @DATA` is ordinary code rather than a directive. A real
+  // load paragraph cannot be computed until every segment has been sized, so
+  // they start at the flat program's zero and are corrected below if the layout
+  // turns out to disagree.
+  applySegmentGroupBases(symbols, { data: 0, code: 0, stack: 0 });
+
   // Passes are repeated until the addresses stop moving.
   //
   // A forward branch has to be *sized* before its target address is known, so
@@ -199,34 +206,55 @@ export function assemble(source: string, options: AssembleOptions = {}): Assembl
   // guess, and showing the author each problem three times is worse than
   // useless.
   const limit = options.maxErrors ?? 500;
-  let previous: Map<string, number> | undefined;
   let passDiagnostics = new DiagnosticBag(limit);
 
-  for (let pass = 1; pass <= MAX_PASSES; pass++) {
-    if (pass > 1) {
-      symbols.beginPass();
-      for (const buffer of buffers.values()) buffer.reset();
-      context.current = buffers.get("_COM") ?? comBuffer;
-      context.listing.length = 0;
-      context.sourceLines.length = 0;
-      context.firstCodeOffset = undefined;
-      context.firstFlatOffset = undefined;
-    }
-    context.pass = pass === 1 ? 1 : 2;
-    passDiagnostics = new DiagnosticBag(limit);
-    context.diagnostics = passDiagnostics;
-    runPass(context, lines);
+  const runPasses = (): void => {
+    let previous: Map<string, number> | undefined;
+    for (let pass = 1; pass <= MAX_PASSES; pass++) {
+      if (pass > 1) {
+        symbols.beginPass();
+        for (const buffer of buffers.values()) buffer.reset();
+        context.current = buffers.get("_COM") ?? comBuffer;
+        context.listing.length = 0;
+        context.sourceLines.length = 0;
+        context.firstCodeOffset = undefined;
+        context.firstFlatOffset = undefined;
+      }
+      context.pass = pass === 1 ? 1 : 2;
+      passDiagnostics = new DiagnosticBag(limit);
+      context.diagnostics = passDiagnostics;
+      runPass(context, lines);
 
-    const addresses = symbols.addresses();
-    if (previous !== undefined && sameAddresses(previous, addresses)) break;
-    previous = addresses;
+      const addresses = symbols.addresses();
+      if (previous !== undefined && sameAddresses(previous, addresses)) break;
+      previous = addresses;
+    }
+  };
+
+  runPasses();
+
+  let layout = resolveLayout(context);
+
+  // The load paragraphs are the one set of values that cannot be known while the
+  // code that reads them is being laid out, so the first pass has to guess. When
+  // the guess was wrong, emit them properly and run once more.
+  //
+  // One more pass is provably enough: an instruction's *size* never depends on
+  // the value of an immediate, so giving `MOV AX, @DATA` its real load address
+  // cannot resize it or move any label. The layout the second run produces is
+  // therefore the layout that produced its own bases.
+  if (applySegmentGroupBases(symbols, {
+    data: layout.entry.dataBase,
+    code: layout.entry.codeBase,
+    stack: layout.entry.stackBase,
+  })) {
+    runPasses();
+    layout = resolveLayout(context);
   }
 
   for (const symbol of symbols.undefinedNames()) {
     diagnostics.error(symbol.line, symbol.column, `undefined symbol ${symbol.name}`);
   }
-
-  const layout = resolveLayout(context);
   const codeBuffer = buffers.get(layout.codeSegmentName);
   const reported = [...diagnostics.all, ...passDiagnostics.all];
 
@@ -1065,18 +1093,57 @@ interface ResolvedLayout {
   codeSegmentName: string;
 }
 
+/**
+ * `SEGMENT`-named programs refer to a segment by name; `.MODEL` programs refer to
+ * one by class, with `@DATA`, `@CODE` and `@STACK`. Both forms end up as the load
+ * paragraph in `entry`.
+ *
+ * Returns whether any name moved, which is what tells the caller that the bytes
+ * already emitted are stale.
+ */
+function applySegmentGroupBases(
+  symbols: SymbolTable,
+  bases: { data: number; code: number; stack: number },
+): boolean {
+  let changed = false;
+  const wanted: Array<[string, number]> = [
+    ["@DATA", bases.data],
+    ["@CODE", bases.code],
+    ["@STACK", bases.stack],
+  ];
+  for (const [name, base] of wanted) {
+    const symbol = symbols.lookup(name);
+    if (symbol?.valueKnown === true && symbol.value === base) continue;
+    symbols.defineSegmentGroup(name, base);
+    changed = true;
+  }
+  return changed;
+}
+
 function resolveLayout(ctx: PassContext): ResolvedLayout {
+  // Whether the program has real segments, which is not the same question as
+  // whether it used the SEGMENT directive.
+  //
+  // `.MODEL SMALL` followed by `.DATA` and `.CODE` is the other way to say it,
+  // and it is how most 8086 programs in the world are written. Those two forms
+  // each get their own named buffers (`_DATA`, `_CODE`), so asking only about
+  // `usesSegmentDirective` sent them down the flat path below -- which reports
+  // the `_COM` buffer and nothing else. The result was an empty image and no
+  // diagnostic: a textbook program assembled cleanly and ran nothing.
+  const hasNamedSegments = ctx.segmentOrder.some((name) => name !== "_COM");
+  const segmented = ctx.usesSegmentDirective || hasNamedSegments;
+
   // Without SEGMENT blocks the whole program is one flat segment, and code is
   // loaded at `origin` so that direct `[0x0100]` references resolve.
   // `ORG` at the top of a program moves the entry point, so prefer the first
   // offset code was actually emitted at over the declared origin.
   // A flat .COM program may hold only data, so fall back to wherever its first
-  // byte landed — `ORG 200h` followed by a DB is the common case.
-  const entryOffset = ctx.usesSegmentDirective
+  // byte landed -- `ORG 200h` followed by a DB is the common case.
+  const entryOffset = segmented
     ? (ctx.firstCodeOffset ?? ctx.origin)
     : (ctx.firstCodeOffset ?? ctx.firstFlatOffset ?? ctx.origin);
 
-  if (!ctx.usesSegmentDirective) {
+  if (!segmented) {
     const buffer = ctx.buffers.get("_COM")!;
     const base = 0;
     const segment: SegmentImage = {
@@ -1120,6 +1187,16 @@ function resolveLayout(ctx: PassContext): ResolvedLayout {
     nextBase = alignToParagraph(nextBase + (buffer?.usedSize ?? 0));
   }
 
+  // The implicit `_COM` buffer exists only so that a flat program has somewhere to
+  // put its bytes. A program that named its own segments never writes to it, and
+  // if it were still allowed to claim the CODE class it would win on source order
+  // -- being first in the list -- and hand back an empty image for the program.
+  // Leave it out unless it holds something; the `!foundCode` case below brings it
+  // back for a program that declared data and no code to run.
+  const segmentsInOrder = ctx.segmentOrder.filter(
+    (name) => name !== "_COM" || (ctx.buffers.get(name)?.usedSize ?? 0) > 0,
+  );
+
   let codeSegmentName = ctx.codeSegmentName;
   let dataSegmentName = ctx.dataSegmentName;
   let stackSegmentName = "_COM";
@@ -1128,7 +1205,7 @@ function resolveLayout(ctx: PassContext): ResolvedLayout {
   let ip = entryOffset;
   let foundCode = false;
 
-  for (const name of ctx.segmentOrder) {
+  for (const name of segmentsInOrder) {
     const buffer = ctx.buffers.get(name);
     if (!buffer) continue;
     const base = bases.get(name) ?? 0;

@@ -297,6 +297,103 @@ describe("assembler", () => {
     });
   });
 
+  /**
+   * The two constructs that made a textbook `.MODEL SMALL` program fail to
+   * assemble here while assembling under the legacy engine.
+   *
+   * Both are spelled the way every 8086 textbook spells them, so neither is
+   * exotic syntax: `@DATA` is how MASM names the load segment of the data class
+   * and `LEA DX, label` is how a person asks for a label's address. Between them
+   * they were the whole reason the reported lab program could not run on this
+   * engine. See `docs/engine-v2-divergences.md`.
+   */
+  describe("@DATA and LEA with a data label", () => {
+    it("resolves @DATA to the data segment's load paragraph", () => {
+      const result = assemble(".MODEL small\n.STACK 100h\n.DATA\nmsg DB 'Hi$'\n.CODE\nMOV AX, @DATA\nHLT");
+      expect(errorsOf(result)).toEqual([]);
+      // The `.MODEL` form without SEGMENT blocks is one flat segment, so every
+      // base is zero and `@DATA` is zero. It is still a *defined* symbol rather
+      // than an undefined one, which is the part that was broken.
+      expect(result.symbols.lookup("@DATA")?.valueKnown).toBe(true);
+      expect(result.symbols.lookup("@DATA")?.value).toBe(0);
+    });
+
+    it("names @DATA after the DATA segment when the program has real segments", () => {
+      // With SEGMENT blocks the data segment is not at zero, so the group symbol
+      // has to name whichever segment carries the DATA class.
+      const source = [
+        "CODE SEGMENT",
+        "  MOV AX, @DATA",
+        "  HLT",
+        "CODE ENDS",
+        "DATA SEGMENT",
+        "  DB 1, 2, 3",
+        "DATA ENDS",
+        "END",
+      ].join("\n");
+      const result = assemble(source);
+      expect(errorsOf(result)).toEqual([]);
+      expect(result.symbols.lookup("@DATA")?.valueKnown).toBe(true);
+      expect(result.symbols.lookup("@DATA")?.value).toBe(result.entry.dataBase);
+    });
+
+    it("resolves @CODE and @STACK the same way", () => {
+      const result = assemble(".MODEL small\n.STACK 100h\n.CODE\nMOV AX, @CODE\nMOV BX, @STACK\nHLT");
+      expect(errorsOf(result)).toEqual([]);
+      expect(result.symbols.lookup("@CODE")?.valueKnown).toBe(true);
+      expect(result.symbols.lookup("@STACK")?.valueKnown).toBe(true);
+    });
+
+    it("accepts LEA with a bare data label", () => {
+      const result = assemble(".MODEL small\n.DATA\nmsg DB 'Hi$'\n.CODE\nLEA DX, msg\nHLT");
+      expect(errorsOf(result)).toEqual([]);
+    });
+
+    it("encodes LEA with a bare label exactly as OFFSET and brackets do", () => {
+      // All three spellings mean the same address, so all three must produce the
+      // same bytes. MASM treats a bare label in LEA as the direct address.
+      const bare = assemble(".DATA\nmsg DB 'Hi$'\n.CODE\nLEA DX, msg\nHLT", { origin: 0 });
+      const offset = assemble(".DATA\nmsg DB 'Hi$'\n.CODE\nLEA DX, OFFSET msg\nHLT", { origin: 0 });
+      const bracketed = assemble(".DATA\nmsg DB 'Hi$'\n.CODE\nLEA DX, [msg]\nHLT", { origin: 0 });
+      expect(errorsOf(bare)).toEqual([]);
+      expect(at(bare, 0, 4)).toEqual(at(offset, 0, 4));
+      expect(at(bare, 0, 4)).toEqual(at(bracketed, 0, 4));
+    });
+
+    it("encodes LEA with a label as a direct address, not a register form", () => {
+      // 8D /r with mod=00, rm=110 and a full 16-bit displacement, because LEA
+      // must not read memory. A bare label has to reach that encoding rather than
+      // being rejected or, worse, matched as [BP].
+      const result = assemble(".DATA\nmsg DB 'Hi$'\n.CODE\nLEA DX, msg\nHLT", { origin: 0 });
+      // 8D /r with mod=00, rm=110 and a full 16-bit displacement. The displacement
+      // is the label's own address, which here is 0: `_DATA` is packed first, so
+      // it loads at the base paragraph. That 0 is also the useful assertion --
+      // a register-direct 8D D2 would show up as no displacement at all.
+      expect(at(result, 0, 4)).toEqual([0x8d, 0x16, 0x00, 0x00]);
+      expect(result.symbols.lookup("MSG")?.value).toBe(0);
+
+      // The same encoding has to survive when the address is not zero, otherwise
+      // a passing test above could just mean the displacement was dropped.
+      const shifted = assemble(".DATA\nDB 0xAA\nmsg DB 'Hi$'\n.CODE\nLEA DX, msg\nHLT", { origin: 0 });
+      expect(at(shifted, 0, 4)).toEqual([0x8d, 0x16, 0x01, 0x00]);
+      expect(shifted.symbols.lookup("MSG")?.value).toBe(1);
+    });
+
+    it("still assembles LEA with a register, which must stay register-indirect", () => {
+      const result = assemble(".DATA\nmsg2 DB 'Hi$'\n.CODE\nLEA SI, [BX]\nLEA DI, msg2\nHLT", { origin: 0 });
+      expect(errorsOf(result)).toEqual([]);
+      // [BX] is mod=00, rm=111: a real register reference with no displacement.
+      expect(at(result, 0, 2)).toEqual([0x8d, 0x37]);
+    });
+
+    it("still rejects LEA of a register, which is not an address", () => {
+      // The strictness that makes this engine worth choosing has to survive the
+      // new bare-label rule: only a label becomes a direct address.
+      const result = assemble("LEA DX, AX\nHLT", { origin: 0 });
+      expect(errorsOf(result).join("\n")).toMatch(/LEA/);
+    });
+  });
+
   describe("macros", () => {
     it("expands a macro and substitutes its parameters", () => {
       const result = assemble("DELAY MACRO n\n  MOV CX, n\n  LOOP $\nENDM\n  DELAY 5\n  HLT", { origin: 0 });

@@ -17,7 +17,7 @@
 
 import { describe, expect, it } from 'vitest';
 import type { EngineId } from '@/lab/execution-engine';
-import { formatProgramOutput, runSourceToPanelText } from '@/lab/run-output';
+import { formatProgramOutput, runSourceToPanel, runSourceToPanelText } from '@/lab/run-output';
 import { createSession } from '@/lab/execution-engine';
 import { ASSEMBLY_DEMOS } from '@/lab/demos';
 import type { ProgramOutput } from '@/emulator/cpu';
@@ -32,6 +32,33 @@ const REPORTED_HELLO_WORLD = [
   'MOV AH, 4Ch',
   'INT 21h',
   "msg DB 'Hello 8086$'",
+].join('\n');
+
+/**
+ * The reported program, in the shape a lab exercise is written: a real
+ * `.MODEL SMALL` program with its own data segment, loading DS from `@DATA` and
+ * taking the message's address with `LEA`.
+ *
+ * This is the one that produced the confusing report, and it is here as a
+ * constant rather than only as a shipped demo so that a failure names the
+ * program rather than whatever a demo happens to be called this month.
+ */
+const LAB_STYLE_HELLO_WORLD = [
+  '    .MODEL SMALL',
+  '    .STACK 100H',
+  '    .DATA',
+  "        msg DB 'Hello World!$'",
+  '    .CODE',
+  '    MAIN PROC',
+  '        MOV AX, @DATA',
+  '        MOV DS, AX',
+  '        LEA DX, msg',
+  '        MOV AH, 09H',
+  '        INT 21H',
+  '        MOV AH, 4CH',
+  '        INT 21H',
+  '    MAIN ENDP',
+  '    END MAIN',
 ].join('\n');
 
 /** The same program with double quotes, which is the spelling MASM documents. */
@@ -94,6 +121,90 @@ describe('the Output panel, for a DOS print', () => {
 
   it('shows the text of a double-quoted hello world on the legacy too', () => {
     expect(runSourceToPanelText('legacy', DOUBLE_QUOTED_HELLO_WORLD)).toContain('Hello 8086');
+  });
+});
+
+/**
+ * The program from the report, on both engines.
+ *
+ * Its whole point is that the two engines must not be confused for one another.
+ * On v2 it is the standard textbook program and it prints. On the legacy it is
+ * rejected for the one documented reason -- no single-quoted strings -- and the
+ * rejection is named rather than swallowed. Before the v2 assembler learned
+ * `@DATA` and `LEA reg, label`, this block failed on v2 with
+ * `undefined symbol @DATA` and `no encoding of LEA accepts DX, msg`.
+ */
+describe('the Output panel, for the reported .MODEL SMALL lab program', () => {
+  it('assembles and prints on v2', () => {
+    const panel = runSourceToPanelText('v2', LAB_STYLE_HELLO_WORLD);
+    expect(panel).toContain('Hello World!');
+    expect(printed(panel)).toBe('Hello World!');
+    expect(panel).toContain(SUCCESS);
+  });
+
+  it('does not report an assembler error on v2', () => {
+    // Narrower than the line above on purpose: `@DATA` and `LEA DX, msg` were
+    // the two failures, and a program that prints the right text while also
+    // carrying an error would otherwise be able to satisfy the first test.
+    const panel = runSourceToPanelText('v2', LAB_STYLE_HELLO_WORLD);
+    expect(panel).not.toContain('undefined symbol');
+    expect(panel).not.toContain('no encoding of LEA');
+  });
+
+  it('reports the legacy limitation on legacy, and says which engine said it', () => {
+    const result = runSourceToPanel('legacy', LAB_STYLE_HELLO_WORLD);
+    expect(result.text).toContain('Invalid data initializer');
+    expect(result.text).not.toContain(SUCCESS);
+    // Provenance is what stops this being mistaken for the v2 result. It lives on
+    // the result rather than inside `text`, because `text` is the program's output
+    // and gets copied out of the panel.
+    expect(result.engine).toBe('legacy');
+  });
+
+  it('prints the same text on v2 whichever way the label is spelled', () => {
+    // Single or double quotes, `@DATA` or a plain address: all the spellings a
+    // person might type have to reach the same string, or "it works" depends on
+    // which example was copied.
+    const doubleQuoted = LAB_STYLE_HELLO_WORLD.replace("'Hello World!$'", '"Hello World!$"');
+    expect(printed(runSourceToPanelText('v2', doubleQuoted))).toBe('Hello World!');
+  });
+});
+
+describe('the Output panel reports which engine produced the result', () => {
+  /**
+   * The confusion this pins down.
+   *
+   * A run result has to name the engine that produced it, because the two
+   * engines disagree about which programs assemble at all. The reported bug was
+   * not that a program printed the wrong thing -- it was that a person could not
+   * tell whose answer they were reading. So the engine travels with the text
+   * rather than being read separately out of a control somewhere else, which is
+   * what let the label and the result drift apart in the first place.
+   */
+  it('carries the engine that ran the program', () => {
+    for (const engine of ENGINES) {
+      const result = runSourceToPanel(engine, REPORTED_HELLO_WORLD);
+      expect(result.engine, engine).toBe(engine);
+    }
+  });
+
+  it('carries the engine on a failed assembly too', () => {
+    // The case that mattered: an error message with no engine on it is the thing
+    // a person cannot act on, because the fix differs per engine.
+    const result = runSourceToPanel('v2', "msg DB 'Hello World!$'");
+    expect(result.engine).toBe('v2');
+  });
+
+  it('distinguishes a diagnostic from a run that produced output', () => {
+    expect(runSourceToPanel('legacy', "msg DB 'x'").kind).toBe('diagnostics');
+    expect(runSourceToPanel('v2', "msg DB 'x'").kind).toBe('output');
+  });
+
+  it('reports the legacy limitation as a diagnostic and not as a successful run', () => {
+    const result = runSourceToPanel('legacy', LAB_STYLE_HELLO_WORLD);
+    expect(result.kind).toBe('diagnostics');
+    expect(result.diagnostics.length).toBeGreaterThan(0);
+    expect(result.text).not.toContain(SUCCESS);
   });
 });
 

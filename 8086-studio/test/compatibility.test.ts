@@ -20,6 +20,7 @@ import { Memory } from "@/engine/memory";
 import { runProgram as legacyRunProgram } from "@/emulator/cpu";
 import { assemble as legacyAssemble } from "@/emulator/assembler";
 import { ASSEMBLY_DEMOS } from "@/lab/demos";
+import { runSourceToPanel } from "@/lab/run-output";
 import { compile, SAMPLE_PROGRAMS_BY_LANGUAGE } from "@/compiler/compiler";
 import type { FrontendLanguage } from "@/compiler/compiler";
 
@@ -55,6 +56,22 @@ const SAMPLES: ReadonlyArray<{ name: string; language: FrontendLanguage; source:
     })),
   );
 
+/**
+ * Where the entry point sits inside the code image, as an index into it.
+ *
+ * `entry.ip` is an offset *within the code segment*, and `image` is that
+ * segment's bytes starting at that segment's own origin. Those are the same
+ * number for a program with real segments and different by the load address for a
+ * flat one, which loads at `origin` (100h by default) so the code generator's
+ * `[0100h]` data references land above it. The arithmetic therefore has to ask
+ * the layout rather than assume either shape -- assuming was how this suite came
+ * to accept an entry point outside the image on a `.MODEL` program.
+ */
+function entryIndexInImage(result: ReturnType<typeof assemble>): number {
+  const codeSegment = result.segments.find((segment) => segment.name === result.entry.codeSegment);
+  return result.entry.ip - (codeSegment?.origin ?? 0);
+}
+
 describe("shipped lab demos", () => {
   it("has demos to check", () => {
     expect(ASSEMBLY_DEMOS.length).toBeGreaterThan(0);
@@ -77,17 +94,76 @@ describe("shipped lab demos", () => {
       // Nothing is left dangling, and the entry point is a real address inside
       // the image rather than a default.
       expect(result.symbols.undefinedNames()).toEqual([]);
-      expect(result.entry.ip).toBeGreaterThanOrEqual(result.image.length - 1);
+      const index = entryIndexInImage(result);
+      expect(index).toBeGreaterThanOrEqual(0);
+      expect(index).toBeLessThan(result.image.length);
     },
   );
 
   it("puts the demo entry point on an opcode", () => {
     for (const demo of ASSEMBLY_DEMOS) {
       const result = assemble(demo.source);
-      const op = result.image[result.entry.ip - (result.entry.codeBase === 0 ? 0x100 : 0)];
-      expect(typeof op).toBe("number");
+      const index = entryIndexInImage(result);
+      // A number here means the index really landed on a byte of the image, which
+      // is the claim being made: the entry point is the first instruction and not
+      // a count that happens to fall off the end.
+      expect(typeof result.image[index]).toBe("number");
       expect(result.image.length).toBeGreaterThan(0);
     }
+  });
+});
+
+/**
+ * The shipped `.MODEL SMALL` hello world, on both engines.
+ *
+ * This is the program from the report that made the engine toggle look unreliable,
+ * so it is worth having in the shipped set rather than only in the regression
+ * test: `src/lab/run-output.test.ts` pins the reported single-quoted spelling, and
+ * this pins the one that ships.
+ *
+ * The shipped source uses double quotes, and that is the whole divergence. Both
+ * engines agree on `.MODEL`, `.STACK`, `.DATA`, `@DATA`, a bare `LEA reg, label`
+ * and `INT 21h` -- verified here rather than assumed, because the first version of
+ * this fix could have made it look like the v2 assembler had gained support for
+ * something the legacy never had. The only disagreement is the quoting: the legacy
+ * rejects `DB 'text'` outright, which is asserted below so the day it stops
+ * rejecting it, the documentation in docs/engine-v2-divergences.md gets updated.
+ */
+describe("the shipped .MODEL hello world, on both engines", () => {
+  const MODEL_HELLO = ASSEMBLY_DEMOS.find((demo) => demo.id === "model-hello");
+
+  it("is in the shipped demo set", () => {
+    expect(MODEL_HELLO).toBeDefined();
+  });
+
+  it.each([
+    ["legacy"],
+    ["v2"],
+  ] as const)("prints Hello World on %s", (engine) => {
+    const result = runSourceToPanel(engine, MODEL_HELLO!.source);
+    expect(result.kind, result.text).toBe("output");
+    expect(result.text).toContain("Hello World!");
+  });
+
+  it("is the double-quoted spelling, so both engines accept it", () => {
+    expect(MODEL_HELLO!.source).toContain('msg DB "Hello World!$"');
+    expect(MODEL_HELLO!.source).not.toContain("msg DB 'Hello World!$'");
+  });
+
+  it("still diverges from the legacy on the single-quoted spelling", () => {
+    // The divergence the shipped demo avoids, pinned so it stays a documented
+    // difference between two engines rather than a silent behaviour of one.
+    //
+    // Replaced through a function, not a string: the replacement ends in `$'`,
+    // which `String.replace` reads as "everything after the match" and would
+    // splice the rest of the program in after the closing quote. The result would
+    // still have been rejected by both engines, just for a different reason.
+    const singleQuoted = MODEL_HELLO!.source.replace(
+      '"Hello World!$"',
+      () => "'Hello World!$'",
+    );
+    expect(runSourceToPanel("legacy", singleQuoted).text).toContain("Invalid data initializer");
+    expect(runSourceToPanel("v2", singleQuoted).text).toContain("Hello World!");
   });
 });
 

@@ -210,6 +210,17 @@
     "#11 | reg AX=1234 BX=004d CX=0000 DX=0000 SI=0000 DI=0000 BP=0000 SP=0ffe CS=0000 DS=0100 ES=0100 SS=0000 IP=0008 FLAGS=0000 | mem 1000:45752bfe | out \"774660\" | halted 1 | error null",
     "end | halted 1 | error null"
   ],
+  "asm:model-hello": [
+    "init | reg AX=0000 BX=0000 CX=0000 DX=0000 SI=0000 DI=0000 BP=0000 SP=0ffe CS=0000 DS=0100 ES=0100 SS=0000 IP=0000 FLAGS=0000 | mem 1000:10c51a36",
+    "#1 | reg AX=0100 BX=0000 CX=0000 DX=0000 SI=0000 DI=0000 BP=0000 SP=0ffe CS=0000 DS=0100 ES=0100 SS=0000 IP=0001 FLAGS=0000 | mem 1000:10c51a36 | out \"\" | halted 0 | error null",
+    "#2 | reg AX=0100 BX=0000 CX=0000 DX=0000 SI=0000 DI=0000 BP=0000 SP=0ffe CS=0000 DS=0100 ES=0100 SS=0000 IP=0002 FLAGS=0000 | mem 1000:10c51a36 | out \"\" | halted 0 | error null",
+    "#3 | reg AX=0100 BX=0000 CX=0000 DX=0100 SI=0000 DI=0000 BP=0000 SP=0ffe CS=0000 DS=0100 ES=0100 SS=0000 IP=0003 FLAGS=0000 | mem 1000:10c51a36 | out \"\" | halted 0 | error null",
+    "#4 | reg AX=0900 BX=0000 CX=0000 DX=0100 SI=0000 DI=0000 BP=0000 SP=0ffe CS=0000 DS=0100 ES=0100 SS=0000 IP=0004 FLAGS=0000 | mem 1000:10c51a36 | out \"\" | halted 0 | error null",
+    "#5 | reg AX=0900 BX=0000 CX=0000 DX=0100 SI=0000 DI=0000 BP=0000 SP=0ffe CS=0000 DS=0100 ES=0100 SS=0000 IP=0005 FLAGS=0000 | mem 1000:10c51a36 | out \"Hello World!\" | halted 0 | error null",
+    "#6 | reg AX=4c00 BX=0000 CX=0000 DX=0100 SI=0000 DI=0000 BP=0000 SP=0ffe CS=0000 DS=0100 ES=0100 SS=0000 IP=0006 FLAGS=0000 | mem 1000:10c51a36 | out \"Hello World!\" | halted 0 | error null",
+    "#7 | reg AX=4c00 BX=0000 CX=0000 DX=0100 SI=0000 DI=0000 BP=0000 SP=0ffe CS=0000 DS=0100 ES=0100 SS=0000 IP=0007 FLAGS=0000 | mem 1000:10c51a36 | out \"Hello World!\" | halted 1 | error null",
+    "end | halted 1 | error null"
+  ],
   "simple:simple": [
     "init | reg AX=0000 BX=0000 CX=0000 DX=0000 SI=0000 DI=0000 BP=0000 SP=0ffe CS=0000 DS=0100 ES=0100 SS=0000 IP=0000 FLAGS=0000 | mem 1000:76efddc5",
     "#1 | reg AX=000a BX=0000 CX=0000 DX=0000 SI=0000 DI=0000 BP=0000 SP=0ffe CS=0000 DS=0100 ES=0100 SS=0000 IP=0001 FLAGS=0000 | mem 1000:76efddc5 | out \"\" | halted 0 | error null",

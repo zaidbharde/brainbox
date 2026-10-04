@@ -70,23 +70,57 @@ export type InputRequest = (
 /** How many steps a run is allowed before it is called off. */
 const DEFAULT_MAX_STEPS = 10_000;
 
+/** One assembler complaint, in the shape both engines report them. */
+export interface PanelDiagnostic {
+  line: number;
+  message: string;
+}
+
 /**
- * Assemble and run `source` on `engine`, and return the text the Output panel
- * should display.
+ * What the Output panel shows, and which engine said it.
+ *
+ * The engine travels *with* the result instead of being read back out of the URL
+ * or the engine toggle by the panel that renders it. That indirection is what
+ * allowed the two to drift apart: a person could be reading the legacy's answer
+ * while a control claimed v2 was selected, with nothing on screen to contradict
+ * it. The result also says whether the program ran at all, because "assembled
+ * cleanly and printed nothing" and "was never accepted" are different problems
+ * and used to be the same empty panel.
+ */
+export interface PanelResult {
+  /** The engine that produced this result. Not necessarily the selected one. */
+  readonly engine: EngineId;
+  /**
+   * Whether the program ran. `diagnostics` means the assembler refused it, so
+   * there is no output and nothing was executed.
+   */
+  readonly kind: 'output' | 'diagnostics';
+  /** What the panel renders, verbatim. */
+  readonly text: string;
+  readonly diagnostics: readonly PanelDiagnostic[];
+}
+
+/**
+ * Assemble and run `source` on `engine`, and report what the panel should show.
  *
  * Assembly failures come back as text rather than as a thrown error, because a
  * person who mistypes a line should read the mistake in the panel and not in a
  * blank screen.
  */
-export function runSourceToPanelText(
+export function runSourceToPanel(
   engine: EngineId,
   source: string,
   requestInput?: InputRequest,
   maxSteps: number = DEFAULT_MAX_STEPS,
-): string {
+): PanelResult {
   const { session, diagnostics } = createSession(engine, source);
   if (session === null || diagnostics.length > 0) {
-    return `Error:\n${diagnostics.map((d) => `Line ${d.line}: ${d.message}`).join('\n')}`;
+    return {
+      engine,
+      kind: 'diagnostics',
+      text: `Error:\n${diagnostics.map((d) => `Line ${d.line}: ${d.message}`).join('\n')}`,
+      diagnostics,
+    };
   }
 
   const inputs: number[] = [];
@@ -97,17 +131,44 @@ export function runSourceToPanelText(
     // stub a prompt to get to the output.
     const request = requestInput ? requestInput(prompts[i], i + 1) : { kind: 'value' as const, value: 0 };
     if (request.kind === 'cancelled') {
-      return 'Run cancelled by user.';
+      return { engine, kind: 'output', text: 'Run cancelled by user.', diagnostics: [] };
     }
     if (request.kind === 'invalid') {
-      return `Error:\nInvalid numeric input: "${request.text}"`;
+      return {
+        engine,
+        kind: 'output',
+        text: `Error:\nInvalid numeric input: "${request.text}"`,
+        diagnostics: [],
+      };
     }
     inputs.push(request.value);
   }
 
   const { state, output } = session.runToCompletion(inputs, maxSteps);
   const outputText = formatProgramOutput(output);
-  return state.error
-    ? `${outputText}\n\nError: ${state.error}`
-    : `${outputText}\n\nProgram completed successfully`;
+  return {
+    engine,
+    kind: 'output',
+    text: state.error
+      ? `${outputText}\n\nError: ${state.error}`
+      : `${outputText}\n\nProgram completed successfully`,
+    diagnostics: [],
+  };
+}
+
+/**
+ * Just the text of a run, for callers that have no use for the provenance.
+ *
+ * Deliberately does *not* include the engine label. The label belongs to the
+ * Output header, where it reads as provenance about the panel rather than as
+ * part of the program's own output, and repeating it inside the `<pre>` would put
+ * a line of UI chrome in text a person might copy out of the panel.
+ */
+export function runSourceToPanelText(
+  engine: EngineId,
+  source: string,
+  requestInput?: InputRequest,
+  maxSteps: number = DEFAULT_MAX_STEPS,
+): string {
+  return runSourceToPanel(engine, source, requestInput, maxSteps).text;
 }

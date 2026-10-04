@@ -172,6 +172,44 @@ function parseOneOperand(
       parser.position++;
       return { kind: "implied", name: implied, line, column };
     }
+
+    // `LEA r16, name` is MASM's spelling for "the address of name". In LEA's
+    // memory-operand slot a bare name is the *direct address* rather than the
+    // contents, which is exactly what `OFFSET name` and `[name]` mean, so all
+    // three spellings have to reach the same encoding.
+    //
+    // Without this, `LEA DX, msg` -- the ordinary way to address a string held in
+    // a `.DATA` segment -- parsed to an immediate and was then refused, because
+    // LEA's source has to be memory: `findCandidates` rejects any non-`mem`
+    // operand so that `LEA AX, BX` cannot be encoded as the register-direct form
+    // that computes nothing. The strictness is right and is kept; what was
+    // missing was the reading of a bare label as an address.
+    //
+    // Reached only after the register names above have all returned, so any
+    // identifier arriving here is a name rather than a register. That matters:
+    // `LEA AX, BX` still falls through to the immediate path below and is still
+    // refused, which is the behaviour that must not regress.
+    if (mnemonic === "LEA") {
+      const start = token.text.toUpperCase() === "OFFSET" ? parser.position + 1 : parser.position;
+      const before = parser.position;
+      parser.position = start;
+      const inner = parser.parse();
+      if (parser.position > start) {
+        return {
+          kind: "mem",
+          // No base and no index is the direct-address form, which ModR/M can
+          // only express as mod=00, rm=110 with a full 16-bit displacement. It
+          // is the same address `[name]` would have produced.
+          address: { disp: inner.value },
+          // The access is through the register, and LEA is word-wide.
+          size: 16,
+          sizeExplicit: false,
+          line,
+          column,
+        };
+      }
+      parser.position = before;
+    }
   }
 
   // `OFFSET name` is the address of the name rather than its contents, and

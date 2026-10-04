@@ -35,7 +35,8 @@ import { InterruptIOPanel } from '@/components/lab/InterruptIOPanel';
 import { compile, CompilationResult, SourceLanguage, SAMPLE_PROGRAMS_BY_LANGUAGE } from '@/compiler/compiler';
 import { detectFrontendLanguage } from '@/compiler/transpiler';
 import { createInitialState, ProgramOutput } from '@/emulator/cpu';
-import { formatProgramOutput, runSourceToPanelText } from '@/lab/run-output';
+import { formatProgramOutput, runSourceToPanel } from '@/lab/run-output';
+import { panelAfterEngineSwitch } from '@/lab/engine-switch';
 import { assemble } from '@/emulator/assembler';
 import { AssembledProgram, CPUState, Registers } from '@/types/cpu';
 import { createSession, legacySession, type DebugSession, type EngineId } from '@/lab/execution-engine';
@@ -329,7 +330,6 @@ export function App() {
   const [sourceCode, setSourceCode] = useState(SIMPLE_LANGUAGE_GUIDE);
   const [asmCode, setAsmCode] = useState('');
   const [compilationResult, setCompilationResult] = useState<CompilationResult | null>(null);
-  const [debugProgram, setDebugProgram] = useState<AssembledProgram | null>(null);
   const [debugSession, setDebugSession] = useState<DebugSession | null>(null);
   const [debugInitialState, setDebugInitialState] = useState<CPUState | null>(null);
   const [editorTab, setEditorTab] = useState<EditorTab>('source');
@@ -490,7 +490,7 @@ export function App() {
    * the debugger runs them on the legacy, which is the engine they target.
    */
   const initializeDebugSession = useCallback((
-    program: AssembledProgram,
+    legacyProgram: AssembledProgram | null,
     origin: DebugOrigin,
     session?: DebugSession,
     demoId: string | null = null,
@@ -498,12 +498,23 @@ export function App() {
     // Taken from the session rather than rebuilt from a legacy program, because
     // the new engine's initial state has real segments in it and a flat 4 KB
     // image from the legacy assembler would not be the same machine.
-    const engineSession = session ?? legacySession(program);
+    //
+    // `legacyProgram` is only the fallback for a caller with no session, which is
+    // the frontend-compiler path. The asm editor used to pass one anyway -- it
+    // ran `assemble(source)` from the legacy assembler even when stepping on v2,
+    // so a v2 debug session was handed a second, differently-parsed program that
+    // nothing read. It is not just wasted work: for source the legacy assembler
+    // cannot even parse, that call was a second opinion nobody asked for and could
+    // not agree with.
+    const engineSession = session ?? (legacyProgram !== null ? legacySession(legacyProgram) : null);
+    if (engineSession === null) {
+      setDebugStatus('No program to debug.');
+      return;
+    }
     const initialState = engineSession.state;
     const initialPerf = createInitialPerformanceMetrics();
     const initialSnapshot = createExecutionSnapshot(initialState, [], 0, initialPerf);
 
-    setDebugProgram(program);
     setDebugSession(engineSession);
     setDebugInitialState(initialState);
     setDebugOrigin(origin);
@@ -562,19 +573,24 @@ export function App() {
       `${window.location.pathname}${query}${window.location.hash}`,
     );
 
-    if (debugSession === null) {
-      return;
+    if (debugSession !== null) {
+      setDebugSession(null);
+      setDebugInitialState(null);
+      setViewMode(debugOrigin);
+      // Said in the output panel rather than in `debugStatus`, because that is only
+      // rendered inside the debug view being left -- the note has to be visible in
+      // the view that is actually returned to.
+      setEditorTab('output');
     }
-    setDebugSession(null);
-    setDebugInitialState(null);
-    setViewMode(debugOrigin);
-    // Said in the output panel rather than in `debugStatus`, because that is only
-    // rendered inside the debug view being left -- the note has to be visible in
-    // the view that is actually returned to.
-    setEditorTab('output');
-    setRunOutput(
-      `Switched to the ${next} engine. The debug session was running on the other engine, so it has been closed rather than relabelled. Press Debug to start one here.`,
-    );
+
+    // The panel is cleared on *every* switch, not only when a debug session was
+    // open. Leaving the previous engine's text in place is what made the toggle
+    // look unreliable: the run had already been fixed to use the current engine,
+    // so the panel showed a fresh result -- but until the next Run it was still
+    // showing the old one, under a toggle reading the other way, with nothing on
+    // screen to say so. Provenance is cleared with it, because the note below is
+    // not a run result and must not inherit a label.
+    setRunOutput(panelAfterEngineSwitch(next, debugSession !== null).text);
   }, [debugOrigin, debugSession]);
 
   const seekTimelineToIndex = useCallback((targetIndex: number) => {
@@ -1048,7 +1064,6 @@ export function App() {
     }
   }, [
     breakpoints,
-    debugProgram,
     debugSnapshots,
     debugState,
     getTriggeredWatchpoint,
@@ -1360,7 +1375,6 @@ export function App() {
       if (nextCompilationResult) {
         setCompilationResult(nextCompilationResult);
       }
-      setDebugProgram(restoredProgram);
       setDebugSession(restoredSession ?? legacySession(restoredProgram));
       setDebugOrigin(restoredOrigin);
       setActiveDemoId(session.asmCode ? resolveDemoIdFromSource(session.asmCode) : null);
@@ -1445,7 +1459,6 @@ export function App() {
     setSelectedInstructionIndex(diagnostics.nextState.registers.IP);
     setDebugStatus(`Manual INT ${vector & 0xFF} triggered${watchpointSuffix}.`);
   }, [
-    debugProgram,
     debugSnapshots,
     debugState.halted,
     getTriggeredWatchpoint,
@@ -1455,10 +1468,18 @@ export function App() {
   ]);
 
   const runAssemblySource = useCallback((source: string): string => {
-    // The panel text is assembled in `runSourceToPanelText`; the only part that
+    // The panel result is assembled in `runSourceToPanel`; the only part that
     // needs a browser is the prompt for port input, which is passed in so the rest
     // of the path stays testable without a DOM.
-    return runSourceToPanelText(engine, source, (port, index) => {
+    //
+    // `engine` is in the dependency list, and that is the whole bug this callback
+    // used to have. It read `engine` from the enclosing component but was memoised
+    // on `[]`, so it kept the engine from the first render for the life of the
+    // page: the toggle set the state, the address bar updated, and Run went on
+    // using the engine that was selected when the editor loaded. `engine` is a
+    // parameter of `runSourceToPanel` rather than something read from a module, so
+    // the fix is to re-create this function when it changes.
+    return runSourceToPanel(engine, source, (port, index) => {
       const raw = window.prompt(`Input required for IN port ${port} (#${index})`, '0');
       if (raw === null) {
         return { kind: 'cancelled' };
@@ -1468,8 +1489,8 @@ export function App() {
         return { kind: 'invalid', text: raw };
       }
       return { kind: 'value', value: Math.trunc(value) };
-    });
-  }, []);
+    }).text;
+  }, [engine]);
 
   const outputIsError = runOutput.includes('Error:') || runOutput.includes('Compilation failed');
   const compilationErrorMessages = useMemo<string[]>(() => {
@@ -1624,7 +1645,11 @@ export function App() {
       setRunOutput(`Compilation failed:\n\n${errorStr}`);
       setEditorTab('output');
     }
-  }, [isCompiling, sourceCode, sourceLanguage]);
+    // `engine` was read to choose the session and the input model, so leaving it
+    // out of the list froze both at the engine selected when this callback was
+    // built -- the same stale-closure bug as `runAssemblySource`, on the Run button
+    // for a compiled program.
+  }, [isCompiling, sourceCode, sourceLanguage, engine]);
 
   const handleDebug = useCallback(() => {
     if (isCompiling) {
@@ -2088,7 +2113,9 @@ print "Hello!"`}</pre>
         setRunOutput(`Error:\n${diagnostics.map((diagnostic) => `Line ${diagnostic.line}: ${diagnostic.message}`).join('\n')}`);
         return;
       }
-      initializeDebugSession(assemble(source), 'asm-editor', session, demoId);
+      // No legacy program: the session above is the program. Passing one meant
+      // running the legacy assembler over v2 source for a value nothing read.
+      initializeDebugSession(null, 'asm-editor', session, demoId);
     };
 
     const handleAsmDebug = () => {

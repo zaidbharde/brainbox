@@ -133,6 +133,39 @@ ISR_1:
     MOV AX, 1234h
     IRET`,
   },
+  {
+    id: 'model-hello',
+    title: 'Hello World (DOS)',
+    description:
+      'The textbook .MODEL program: loads DS from @DATA, takes the message address with LEA, and prints it with INT 21h.',
+    // Double quotes, which is the spelling MASM documents and the only one both
+    // engines accept. The single-quoted form is what most people type, and it
+    // looks identical until the legacy assembler refuses it with "Invalid data
+    // initializer" while v2 runs it -- so shipping the double-quoted spelling means
+    // this demo is a working example on either engine rather than an example that
+    // only works on one.
+    //
+    // See docs/engine-v2-divergences.md, and the `.MODEL SMALL` block in
+    // src/lab/run-output.test.ts, which pins the divergence in both directions.
+    source: `; Hello World via DOS INT 21h
+    .MODEL SMALL
+    .STACK 100H
+
+    .DATA
+        msg DB "Hello World!$"
+
+    .CODE
+    MAIN PROC
+        MOV AX, @DATA        ; the data segment's load paragraph
+        MOV DS, AX
+        LEA DX, msg          ; a bare label here is its address
+        MOV AH, 09H          ; print the $-terminated string at DS:DX
+        INT 21H
+        MOV AH, 4CH          ; exit
+        INT 21H
+    MAIN ENDP
+    END MAIN`,
+  },
 ];
 
 export const DEFAULT_DEMO = ASSEMBLY_DEMOS[0];

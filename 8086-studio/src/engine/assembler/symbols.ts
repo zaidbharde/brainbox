@@ -86,6 +86,31 @@ export class SymbolTable {
     this.order.push(key);
   }
 
+  /**
+   * Define a name the assembler owns rather than the program.
+   *
+   * `@DATA`, `@CODE` and `@STACK` name the load paragraph of the segment with
+   * that class. They are not written in the source, so nothing in the program can
+   * redefine them, and their value is not known until the layout exists -- which
+   * may be after several passes have already resolved them against a provisional
+   * value. `define` cannot express that: it reports the second call as a
+   * duplicate definition. This is idempotent instead.
+   */
+  defineSegmentGroup(name: string, value: number): void {
+    const key = symbolKey(name);
+    const existing = this.entries.get(key);
+    this.entries.set(key, {
+      name: key,
+      kind: "equate",
+      value,
+      line: existing?.line ?? 0,
+      column: existing?.column ?? 0,
+      defined: true,
+      valueKnown: true,
+    });
+    if (!this.order.includes(key)) this.order.push(key);
+  }
+
   /** Every defined symbol, in definition order. */
   all(): Symbol[] {
     return this.order

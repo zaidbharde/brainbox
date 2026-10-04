@@ -213,6 +213,28 @@ finds the array correctly on both and both sum it to the same total. Use `OFFSET
 
 ## Bugs that are fixed, and how each was found
 
+- **The engine toggle did not reach Run, and switching left the old result on
+  screen.** Two bugs that compounded into one report. `runAssemblySource` in
+  `App.tsx` was a `useCallback` with an empty dependency list that read `engine`, so
+  it kept the engine selected when the editor loaded for the life of the page: the
+  toggle set the state, the address bar updated, and Run went on using the old
+  engine. `handleRun` had the same omission for the frontend-compiler path.
+
+  Fixing the dispatch was not enough on its own. `changeEngine` cleared the Output
+  panel only when a debug session was open, so with dispatch fixed a switch still
+  left the previous engine's text in the panel under a toggle reading the other way,
+  with nothing on screen to say so — the panel and the control disagreed even when
+  the run was right. The panel is now cleared on every switch, with the note saying
+  so, and the rule lives in `src/lab/engine-switch.ts` so it can be tested rather
+  than only clicked.
+
+  A third, quieter one: the asm editor's Debug button built a session from the
+  selected engine — so v2 did execute — but it *also* ran the legacy assembler over
+  the same source and handed that second, differently-parsed program to the debug
+  layer. The unused state it fed has been removed.
+
+  `run-output.test.ts` runs the reported program through the whole path to the
+  panel's text; `engine-switch.test.ts` covers the switch.
 - **A single-quoted `DB` string assembled to one byte and printed nothing.** The v2
   lexer used `"` as its only string delimiter and read `'` as a character literal, so
   `msg DB 'Hello 8086$'` became a single byte holding the *last* character — `$`. Since
@@ -228,6 +250,56 @@ finds the array correctly on both and both sum it to the same total. Use `OFFSET
   only visible in a browser. `run-output.test.ts` now tests the string the Output panel
   renders, and iterates every shipped sample asserting that a run, a step-by-step walk
   and the panel all agree.
+- **`.MODEL SMALL` with `.DATA`/`.CODE` assembled to nothing, silently.** The most
+  consequential bug in this list, and the one that made the engine toggle look
+  broken. `.DATA` and `.CODE` each create their own named buffer (`_DATA`, `_CODE`),
+  but the layout asked only whether the program had used the `SEGMENT` *directive*.
+  A textbook `.MODEL` program uses the directives and no `SEGMENT` blocks, so it took
+  the flat path, which reports the implicit `_COM` buffer — one nothing had written
+  to. The result was an empty image, no entry point, and **no diagnostic**: the
+  program assembled cleanly and ran nothing.
+
+  Two things had to change, and only fixing one of them leaves the bug half alive:
+
+  1. The layout now asks whether the program *has* named segments, rather than
+     whether it spelled them a particular way.
+  2. The implicit `_COM` buffer is first in source order and carries class `CODE`,
+     so it won code-segment detection on a `.MODEL` program and claimed an empty
+     image. It is now excluded unless it actually holds bytes — with the existing
+     `!foundCode` fallback still putting it back for a program that declares data and
+     no code.
+
+  The test that pins this is `the shipped .MODEL hello world, on both engines` in
+  `test/compatibility.test.ts`, and it runs on *both* engines: the legacy handles
+  `.MODEL`, `.STACK`, `.DATA`, `@DATA` and a bare `LEA reg, label` correctly, so the
+  first version of this fix could easily have looked like the new assembler had
+  gained support the legacy never had. It had not.
+- **`@DATA`, `@CODE` and `@STACK` were undefined symbols.** `MOV AX, @DATA` — the
+  load paragraph of the data segment, and the first line of most real 8086 programs —
+  reported `undefined symbol @DATA`. MASM names a segment by class the same way it
+  names one by label in a `SEGMENT` block; the new assembler only had the latter.
+
+  These cannot be known while the code that reads them is being laid out, because the
+  load paragraphs are only assigned once every segment has been sized. They are
+  therefore defined as zero for the discovery passes, and one more pass is run
+  afterwards if the real bases differ. One is provably enough: an instruction's size
+  never depends on the *value* of an immediate, so giving `MOV AX, @DATA` its real
+  load address cannot resize it or move a label, and the layout the second run
+  produces is the layout that produced its own bases.
+- **`LEA DX, msg` was rejected.** `LEA` takes a memory operand, and a bare label
+  parsed to an immediate, so the encoder refused it with `no encoding of LEA accepts
+  DX, msg`. But a bare label in `LEA`'s operand slot *is* the address — MASM spells
+  that the same way `[msg]` and `OFFSET msg` do, and all three must produce the same
+  bytes.
+
+  The fix is deliberately narrow. A bare label becomes a direct address (no base, no
+  index, which ModR/M can only express as `mod=00, rm=110` with a full 16-bit
+  displacement), and nothing else changed: `LEA AX, BX` is still refused, because
+  `findCandidates` rejects any non-memory operand so that the register-direct `LEA`
+  form — which computes nothing — cannot be encoded. A new label rule that loosened
+  that would be a different bug. `assemble.test.ts` asserts both directions, and the
+  direct-address test carries a second program with a non-zero displacement so that a
+  passing assertion cannot mean "the displacement was dropped".
 - **Direct-offset stores were dropped.** `MOV [0200h], AX` is opcode `A3`, a direct
   memory offset rather than a ModR/M form, and the new engine used to discard it,
   leaving `0200h` empty.
@@ -317,6 +389,27 @@ So the remaining work is:
 
 Until then, `?engine=v2` changes what Run does and leaves Debug as it was.
 
+**Stepping already runs on the selected engine.** What remains legacy-only is the
+panels' *reading* of the program, not the execution. This section used to say the
+debugger "still assembles and steps through the legacy, on both engines", which was
+half true in a way that mattered: the asm editor's Debug button built a session from
+the selected engine — so v2 did execute — but it *also* ran the legacy assembler over
+the same source and handed that second, differently-parsed program to the debug
+layer. For v2-only source that was a second opinion nobody asked for, on an assembler
+that had already rejected the program. The unused `debugProgram` state it fed has
+been removed, so the session is the program.
+
+### The engine a debug session runs on
+
+The Debug button in the assembly editor now follows the toggle, like Run. It did
+before too, through `createSession(engine, source)`; what was wrong was the second
+assembly described above, not the choice of session.
+
+The frontend-compiler path is deliberately different and still legacy-only: those
+programs are produced without going through either assembler, so there is no source
+to hand the new engine, and `initializeDebugSession` falls back to a legacy session
+from the compiler's own `AssembledProgram`.
+
 ### A real input stream for the new engine
 
 `inputPrompts()` returning an empty list is a safe answer, not a working one. The
@@ -340,7 +433,7 @@ legacy alone on principle. `npm test` and `npm run build` are both green.
 ## How to check any of this still holds
 
 ```bash
-npm test          # 1357 tests, 14 files
+npm test          # 2077 tests, 28 files
 npm run build     # vite build
 npm run typecheck # the one accepted error above
 ```
@@ -351,8 +444,13 @@ you change either engine, the places that will catch you are:
 
 - `src/lab/execution-engine.test.ts` — the interface, the switch, and the deliberate
   differences in the `where the engines genuinely differ` block
+- `src/lab/run-output.test.ts` — what the Output panel renders, and which engine
+  produced it
+- `src/lab/engine-switch.test.ts` — what an engine switch does to a panel
+- `src/engine/assembler/assemble.test.ts` — `@DATA`/`@CODE`/`@STACK`, `LEA` addressing
 - `src/engine/cpu/executable-coverage.test.ts` — every table entry executes
 - `src/engine/cpu/operand-coverage.test.ts` — every operand kind resolves, and the
   shadowed entries stay shadowed
 - `src/engine/cpu/flags-conformance.test.ts` — flags against the 8086, not the legacy
-- `test/compatibility.test.ts` — every shipped compiler sample on both engines
+- `test/compatibility.test.ts` — every shipped compiler sample and lab demo on both
+  engines
