@@ -8,9 +8,7 @@
   },
   "trackedFiles": [
     "app/build.gradle.kts",
-    "app/java/com/example/myfirstapp/MainActivity.java",
     "app/proguard-rules.pro",
-    "app/res/layout/activity_main.xml",
     "app/src/androidTest/java/com/rndevil/x0xdevil/ExampleInstrumentedTest.kt",
     "app/src/main/AndroidManifest.xml",
     "app/src/main/java/com/rndevil/x0xdevil/MainActivity.kt",
@@ -51,5 +49,5 @@
     "local.properties",
     "settings.gradle.kts"
   ],
-  "updatedAt": "2026-04-01T07:49:33.645Z"
+  "updatedAt": "2026-04-02T07:26:02.107Z"
 }
