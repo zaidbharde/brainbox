@@ -49,6 +49,46 @@ rather than reloading. A debug session is **not** carried across the switch: its
 panels are one engine's machine, so it is closed and the view it was opened from is
 restored with a note, rather than left on screen relabelled.
 
+The Output panel is cleared on **every** switch, not only when a session was open.
+That was the second half of the same bug, and the half that survived fixing the
+first: the Run button had captured the engine at load time, so it ran the engine
+selected when the editor opened. With that fixed, a switch still left the previous
+engine's text sitting in the panel under a toggle reading the other way, with
+nothing on screen to say so — so the panel and the control disagreed even when the
+run was right. The rule lives in `src/lab/engine-switch.ts` rather than in `App`, so
+it is testable; `engine-switch.test.ts` covers it.
+
+## Which engine produced what the Output panel shows
+
+The panel names the engine that produced its contents, next to its title:
+`ran on legacy` or `ran on v2`. This is not decoration. The two engines disagree
+about which programs assemble at all — `msg DB 'text'` is rejected outright by the
+legacy and accepted by v2 — so "which engine ran this" is not answerable from the
+program, and a diagnostic without an engine on it leaves a person unable to tell a
+real mistake from having picked the other one.
+
+The engine travels **with the result** (`PanelResult.engine`, from
+`runSourceToPanel` in `src/lab/run-output.ts`) rather than being read back out of the
+URL or the toggle by whatever renders it. That indirection is what let the label and
+the result drift apart in the first place. `App` keeps the text and the provenance in
+one `setPanel(text, engine)` setter for the same reason: two `useState` calls meant
+any writer could update one and forget the other.
+
+The label deliberately does **not** appear inside the panel text. `<pre>` content is
+what a person copies out, and a line of UI chrome in the middle of a program's output
+is worse than a missing one.
+
+Three kinds of text can be in the panel and only two have an engine behind them:
+
+| Panel contents | Provenance |
+| --- | --- |
+| a run's output | the engine that ran it |
+| an engine's assembler rejecting the program | that engine |
+| a frontend compilation failure | none — no engine was asked |
+| the note an engine switch leaves behind | none — the lab wrote it, not an engine |
+
+`null` is rendered as no label at all, rather than guessed at.
+
 BrainBox does not embed the studio in an iframe — it hands the whole window over to
 it with `location.replace` (`frontend/pages/X86Studio.jsx`) — which means a redirect
 was dropping the query string, so `?engine=v2` on a BrainBox URL never arrived. It is
@@ -112,6 +152,7 @@ src/lab/
   execution-engine.ts  the interface, the switch, LegacySession
   engine-v2.ts         V2Session
   engine-choice.ts     resolving, remembering and publishing the engine choice
+  engine-switch.ts     what an engine switch does to the Output panel
   run-output.ts        the one path from source to the Output panel's text
   debugger.ts          the legacy's step diagnostics
 src/components/
@@ -129,17 +170,18 @@ comparisons mean something: a shared helper would make them agree by constructio
 ## What is verified, and by what
 
 ```
-2041 tests, 27 files
+2077 tests, 28 files
   effects.test.ts                326   every instruction's memory and register effect
   executable-coverage.test.ts   320   every table entry assembles and executes
   isa-boundary.test.ts          172
   cpu.test.ts                   169   instruction behaviour
   table.test.ts                 137   the table itself
-  compatibility.test.ts          94   every shipped compiler sample, both engines
+  compatibility.test.ts         101   every shipped compiler sample and lab demo, both engines
   decoder / encoder fixtures    431   231 decoding every encoding, 200 source spellings
-  assembler + assembler tests    67   assemble, lexer, legacy differential
+  assembler + assembler tests    69   assemble, lexer, legacy differential
   segment-ops / return-forms      54   segment PUSH/POP, far returns
-  run-output.test.ts             23   the Run path and the Output panel
+  run-output.test.ts             33   the Run path and the Output panel
+  engine-switch.test.ts           9   what an engine switch does to the panel
   memory / segments / session     55
   engine-choice.test.ts          12   resolution order, invalid values, blocked storage
   engine-v2.test.ts              17   the adapter

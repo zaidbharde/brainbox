@@ -35,8 +35,8 @@ import { InterruptIOPanel } from '@/components/lab/InterruptIOPanel';
 import { compile, CompilationResult, SourceLanguage, SAMPLE_PROGRAMS_BY_LANGUAGE } from '@/compiler/compiler';
 import { detectFrontendLanguage } from '@/compiler/transpiler';
 import { createInitialState, ProgramOutput } from '@/emulator/cpu';
-import { formatProgramOutput, runSourceToPanel } from '@/lab/run-output';
-import { panelAfterEngineSwitch } from '@/lab/engine-switch';
+import { formatProgramOutput, panelEngineLabel, runSourceToPanel, type PanelResult } from '@/lab/run-output';
+import { panelAfterEngineSwitch, type PanelProvenance } from '@/lab/engine-switch';
 import { assemble } from '@/emulator/assembler';
 import { AssembledProgram, CPUState, Registers } from '@/types/cpu';
 import { createSession, legacySession, type DebugSession, type EngineId } from '@/lab/execution-engine';
@@ -334,8 +334,32 @@ export function App() {
   const [debugInitialState, setDebugInitialState] = useState<CPUState | null>(null);
   const [editorTab, setEditorTab] = useState<EditorTab>('source');
   const [runOutput, setRunOutput] = useState<string>('');
+  /**
+   * Which engine produced `runOutput`, or null when no engine did.
+   *
+   * Held next to the text rather than derived from `engine` on the way to the
+   * screen, because those are not the same value. The panel can hold a legacy
+   * result while v2 is selected, and the whole point of the label is to make that
+   * visible instead of letting the toggle imply otherwise. Null is the honest
+   * answer for text no engine wrote -- a frontend compilation failure, or the note
+   * an engine switch leaves behind.
+   */
+  const [runOutputEngine, setRunOutputEngine] = useState<PanelProvenance>(null);
   const [isCompiling, setIsCompiling] = useState(false);
   const [debugOrigin, setDebugOrigin] = useState<DebugOrigin>('editor');
+
+  /**
+   * Replace the Output panel's contents and who produced them, together.
+   *
+   * Two `useState` calls rather than one, so every writer has to answer the
+   * provenance question. Writing the text and leaving the engine behind is how the
+   * panel ended up able to show one engine's answer under the other's toggle, and a
+   * single setter is the cheapest place to make that unrepeatable.
+   */
+  const setPanel = useCallback((text: string, producedBy: PanelProvenance) => {
+    setRunOutput(text);
+    setRunOutputEngine(producedBy);
+  }, []);
 
   // Which engine runs the program. Resolved once, on load, from the URL, then the
   // saved choice, then the default -- see `resolveEngine`. Held in state rather
@@ -389,8 +413,9 @@ export function App() {
     }
     setEditorTab('source');
     setCompilationResult(null);
-    setRunOutput('');
-  }, []);
+    // Both halves, so clearing the panel cannot leave a stale engine label behind.
+    setPanel('', null);
+  }, [setPanel]);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -590,8 +615,9 @@ export function App() {
     // showing the old one, under a toggle reading the other way, with nothing on
     // screen to say so. Provenance is cleared with it, because the note below is
     // not a run result and must not inherit a label.
-    setRunOutput(panelAfterEngineSwitch(next, debugSession !== null).text);
-  }, [debugOrigin, debugSession]);
+    const panel = panelAfterEngineSwitch(next, debugSession !== null);
+    setPanel(panel.text, panel.provenance);
+  }, [debugOrigin, debugSession, setPanel]);
 
   const seekTimelineToIndex = useCallback((targetIndex: number) => {
     if (debugSnapshots.length === 0) {
@@ -1467,7 +1493,7 @@ export function App() {
     traceLog,
   ]);
 
-  const runAssemblySource = useCallback((source: string): string => {
+  const runAssemblySource = useCallback((source: string): PanelResult => {
     // The panel result is assembled in `runSourceToPanel`; the only part that
     // needs a browser is the prompt for port input, which is passed in so the rest
     // of the path stays testable without a DOM.
@@ -1489,7 +1515,7 @@ export function App() {
         return { kind: 'invalid', text: raw };
       }
       return { kind: 'value', value: Math.trunc(value) };
-    }).text;
+    });
   }, [engine]);
 
   const outputIsError = runOutput.includes('Error:') || runOutput.includes('Compilation failed');
@@ -1589,7 +1615,10 @@ export function App() {
       const { session, diagnostics } = createSession(engine, result.assembly);
       if (session === null) {
         const errorStr = diagnostics.map((d) => `Line ${d.line}: ${d.message}`).join('\n');
-        setRunOutput(`Compilation failed:\n\n${errorStr}`);
+        // The engine's own assembler refused it, so the panel names the engine: the
+        // same source may well assemble on the other one, and which engine said no
+        // is the first thing needed to act on it.
+        setPanel(`Compilation failed:\n\n${errorStr}`, engine);
         setEditorTab('output');
         return;
       }
@@ -1615,13 +1644,13 @@ export function App() {
       for (const inputName of inputPrompts) {
         const raw = window.prompt(`Enter value for ${inputName}:`, '0');
         if (raw === null) {
-          setRunOutput('Run cancelled by user.');
+          setPanel('Run cancelled by user.', engine);
           setEditorTab('output');
           return;
         }
         const value = Number(raw.trim());
         if (!Number.isFinite(value)) {
-          setRunOutput(`Error:\nInvalid numeric input for ${inputName}: "${raw}"`);
+          setPanel(`Error:\nInvalid numeric input for ${inputName}: "${raw}"`, engine);
           setEditorTab('output');
           return;
         }
@@ -1637,19 +1666,22 @@ export function App() {
         outputStr += '\n\nProgram completed successfully';
       }
       
-      setRunOutput(outputStr);
+      setPanel(outputStr, engine);
       setEditorTab('output');
     } else {
       // Show compilation errors
       const errorStr = result.errors.map(e => `Line ${e.line}: ${e.message}`).join('\n');
-      setRunOutput(`Compilation failed:\n\n${errorStr}`);
+      // No provenance: this failed in the frontend compiler, before either engine
+      // was asked to do anything. Labelling it would put an engine's name on a
+      // verdict that engine never gave.
+      setPanel(`Compilation failed:\n\n${errorStr}`, null);
       setEditorTab('output');
     }
     // `engine` was read to choose the session and the input model, so leaving it
     // out of the list froze both at the engine selected when this callback was
     // built -- the same stale-closure bug as `runAssemblySource`, on the Run button
     // for a compiled program.
-  }, [isCompiling, sourceCode, sourceLanguage, engine]);
+  }, [isCompiling, sourceCode, sourceLanguage, engine, setPanel]);
 
   const handleDebug = useCallback(() => {
     if (isCompiling) {
@@ -1969,7 +2001,8 @@ export function App() {
                   >
                     {runOutput ? (
                       <div className="space-y-3">
-                        <div className="flex items-center justify-end">
+                        <div className="flex items-center justify-between gap-2">
+                          <RunProvenance engine={runOutputEngine} />
                           <Button
                             variant="secondary"
                             size="sm"
@@ -2100,7 +2133,8 @@ print "Hello!"`}</pre>
     const handleAsmRun = () => {
       setShowErrorAssistant(false);
       setActiveDemoId(resolveDemoIdFromSource(activeAsmCode));
-      setRunOutput(runAssemblySource(activeAsmCode));
+      const result = runAssemblySource(activeAsmCode);
+      setPanel(result.text, result.engine);
     };
 
     // Through the selected engine, so the diagnostics shown come from the engine
@@ -2110,7 +2144,11 @@ print "Hello!"`}</pre>
     const debugAsmSource = (source: string, demoId: string | null) => {
       const { session, diagnostics } = createSession(engine, source);
       if (session === null || diagnostics.length > 0) {
-        setRunOutput(`Error:\n${diagnostics.map((diagnostic) => `Line ${diagnostic.line}: ${diagnostic.message}`).join('\n')}`);
+        // Names the engine, because whether a program assembles is the one thing
+        // the two engines disagree about: reporting the diagnostic without saying
+        // which assembler produced it left a person unable to tell a real mistake
+        // from picking the other engine.
+        setPanel(`Error:\n${diagnostics.map((diagnostic) => `Line ${diagnostic.line}: ${diagnostic.message}`).join('\n')}`, engine);
         return;
       }
       // No legacy program: the session above is the program. Passing one meant
@@ -2130,7 +2168,8 @@ print "Hello!"`}</pre>
     const loadAndRunDemo = (source: string, demoId: string | null) => {
       setAsmCode(source);
       setActiveDemoId(demoId);
-      setRunOutput(runAssemblySource(source));
+      const result = runAssemblySource(source);
+      setPanel(result.text, result.engine);
     };
 
     const loadAndDebugDemo = (source: string, demoId: string | null) => {
@@ -2192,7 +2231,11 @@ print "Hello!"`}</pre>
           
           <div className="side-panel-modern w-80 p-4 overflow-y-auto">
             <Card className="mb-4">
-              <CardHeader title="Output" icon={<Terminal className="w-4 h-4" />} />
+              <CardHeader
+                title="Output"
+                icon={<Terminal className="w-4 h-4" />}
+                subtitle={runOutputEngine !== null ? panelEngineLabel(runOutputEngine) : undefined}
+              />
               <CardContent>
                 <div className="mb-3 flex items-center justify-end">
                   <Button
@@ -2866,6 +2909,29 @@ print "Hello!"`}</pre>
 
 function formatHex(value: number, width: number = 4) {
   return value.toString(16).toUpperCase().padStart(width, '0');
+}
+
+/**
+ * Which engine produced the text in the Output panel.
+ *
+ * Renders nothing when no engine did, rather than guessing. The panel holds three
+ * kinds of text: a run result, an engine's assembler rejecting the program, and a
+ * note the lab itself wrote after an engine switch. Only the first two have an
+ * engine behind them, and labelling the third would put an engine's name on
+ * something that engine never produced.
+ */
+function RunProvenance({ engine }: { engine: PanelProvenance }) {
+  if (engine === null) {
+    return null;
+  }
+  return (
+    <span
+      className="shrink-0 rounded-full border border-[#3a547f]/50 bg-[#16233a] px-2 py-0.5 text-[11px] tracking-wide text-[#8ea6c9]"
+      title="Which engine assembled and ran this program. The two engines do not accept the same source."
+    >
+      {panelEngineLabel(engine)}
+    </span>
+  );
 }
 
 function SegmentPicker({

@@ -17,7 +17,7 @@
 
 import { describe, expect, it } from 'vitest';
 import type { EngineId } from '@/lab/execution-engine';
-import { formatProgramOutput, runSourceToPanel, runSourceToPanelText } from '@/lab/run-output';
+import { formatProgramOutput, panelEngineLabel, runSourceToPanel, runSourceToPanelText } from '@/lab/run-output';
 import { createSession } from '@/lab/execution-engine';
 import { ASSEMBLY_DEMOS } from '@/lab/demos';
 import type { ProgramOutput } from '@/emulator/cpu';
@@ -156,9 +156,10 @@ describe('the Output panel, for the reported .MODEL SMALL lab program', () => {
     expect(result.text).toContain('Invalid data initializer');
     expect(result.text).not.toContain(SUCCESS);
     // Provenance is what stops this being mistaken for the v2 result. It lives on
-    // the result rather than inside `text`, because `text` is the program's output
-    // and gets copied out of the panel.
+    // the result and in the panel header rather than inside `text`, because
+    // `text` is the program's output and gets copied out of the panel.
     expect(result.engine).toBe('legacy');
+    expect(panelEngineLabel(result.engine)).toBe('ran on legacy');
   });
 
   it('prints the same text on v2 whichever way the label is spelled', () => {
@@ -205,6 +206,17 @@ describe('the Output panel reports which engine produced the result', () => {
     expect(result.kind).toBe('diagnostics');
     expect(result.diagnostics.length).toBeGreaterThan(0);
     expect(result.text).not.toContain(SUCCESS);
+  });
+
+  it('names each engine in the label the panel header shows', () => {
+    expect(panelEngineLabel('v2')).toBe('ran on v2');
+    expect(panelEngineLabel('legacy')).toBe('ran on legacy');
+  });
+
+  it('gives the two engines different labels', () => {
+    // If these were ever the same string the header would stop answering the
+    // only question it exists to answer.
+    expect(panelEngineLabel('v2')).not.toBe(panelEngineLabel('legacy'));
   });
 });
 

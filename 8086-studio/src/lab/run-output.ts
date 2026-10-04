@@ -101,6 +101,17 @@ export interface PanelResult {
 }
 
 /**
+ * The provenance the Output header shows next to its title.
+ *
+ * Two engines that disagree about which programs assemble make this worth saying
+ * out loud: the same source is a working program on one and a rejected one on the
+ * other, so "what did I just run" is not answerable from the program alone.
+ */
+export function panelEngineLabel(engine: EngineId): string {
+  return engine === 'v2' ? 'ran on v2' : 'ran on legacy';
+}
+
+/**
  * Assemble and run `source` on `engine`, and report what the panel should show.
  *
  * Assembly failures come back as text rather than as a thrown error, because a
