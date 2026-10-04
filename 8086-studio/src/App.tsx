@@ -17,6 +17,7 @@ import { InstructionPipeline } from '@/components/lab/InstructionPipeline';
 import { PerformanceMonitor } from '@/components/lab/PerformanceMonitor';
 import { TraceLog } from '@/components/lab/TraceLog';
 import { DemoLibrary } from '@/components/lab/DemoLibrary';
+import { ExampleLibrary } from '@/components/lab/ExampleLibrary';
 import { TimeTravelTimeline } from '@/components/lab/TimeTravelTimeline';
 import { SnapshotManager } from '@/components/lab/SnapshotManager';
 import { InstructionInspector } from '@/components/lab/InstructionInspector';
@@ -2286,6 +2287,17 @@ print "Hello!"`}</pre>
                   onLoad={(demo) => loadDemo(demo.source, demo.id)}
                   onLoadAndRun={(demo) => loadAndRunDemo(demo.source, demo.id)}
                   onLoadAndDebug={(demo) => loadAndDebugDemo(demo.source, demo.id)}
+                />
+              </CardContent>
+            </Card>
+
+            <Card className="mb-4">
+              <CardHeader title="Example Library" icon={<BookOpen className="w-4 h-4" />} />
+              <CardContent>
+                <ExampleLibrary
+                  onLoad={(example) => loadDemo(example.source, example.id)}
+                  onLoadAndRun={(example) => loadAndRunDemo(example.source, example.id)}
+                  onLoadAndDebug={(example) => loadAndDebugDemo(example.source, example.id)}
                 />
               </CardContent>
             </Card>
