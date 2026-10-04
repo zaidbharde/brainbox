@@ -2065,12 +2065,17 @@ function renderXMLLayout(xml, colorsSrc, strSrc) {
   // Preprocess: strip XML declaration, comments, xmlns declarations
   // Then normalise tag names (strip dotted package paths and colon prefixes)
   // but KEEP android:/app: on attribute names so getAttr can find them
+  const xmlCommentPattern = new RegExp('<!--[\\s\\S]*?-->', 'g');
+  const xmlDeclarationPattern = new RegExp('<\\?xml[\\s\\S]*?\\?>', 'gi');
+  const qualifiedTagPattern = new RegExp('(<\\/?)[\\w.]+\\.([\\w]+)(\\s|\\/?>)', 'g');
+  const prefixedTagPattern = new RegExp('(<\\/?)[\\w]+:([\\w]+)(\\s|\\/?>)', 'g');
+
   let cleaned = xml
-    .replace(/<!--[\s\S]*?-->/g, '')             // remove XML comments
-    .replace(/<\?[^?]*\?>/g, '')                 // remove <?xml ...?>
+    .replace(xmlCommentPattern, '')              // remove XML comments
+    .replace(xmlDeclarationPattern, '')          // remove <?xml ...?>
     // keep xmlns declarations so prefixed attrs (android:, app:) remain valid
-    .replace(/(<\/?)[\w.]+\.([\w]+)(\s|\/?>)/g, '$1$2$3')  // pkg.Class -> Class in tag names
-    .replace(/(<\/?)[\w]+:([\w]+)(\s|\/?>)/g, '$1$2$3')     // ns:Class -> Class in tag names
+    .replace(qualifiedTagPattern, '$1$2$3')      // pkg.Class -> Class in tag names
+    .replace(prefixedTagPattern, '$1$2$3')       // ns:Class -> Class in tag names
     .trim();
 
   // Wrap in a root if needed (some layouts have multiple roots)
