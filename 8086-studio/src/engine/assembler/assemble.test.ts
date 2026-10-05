@@ -476,6 +476,38 @@ describe("assembler", () => {
       expect(errorsOf(result).join()).toContain("cannot be subtracted");
     });
 
+    it.each(["AX", "CX", "DX", "SP", "AL"])(
+      "rejects %s as a memory address register",
+      (register) => {
+        const result = assemble(`MOV AX, [${register}]`, { origin: 0 });
+        expect(errorsOf(result).join()).toContain(
+          `${register} cannot be used in an 8086 effective address`,
+        );
+      },
+    );
+
+    it.each([
+      ["MOV AX", "[BX]"],
+      ["MOV AX", "[BP]"],
+      ["MOV AX", "[SI]"],
+      ["MOV AX", "[DI]"],
+      ["MOV AX", "[BX+SI]"],
+      ["MOV AX", "[BX+DI]"],
+      ["MOV AX", "[BP+SI]"],
+      ["MOV AX", "[BP+DI]"],
+      ["MOV AX", "[BX+4]"],
+      ["MOV AX", "[BP+04h]"],
+      ["MOV AX", "[1234h]"],
+      ["MOV AX", "[variable]"],
+      ["MOV AL", "BYTE PTR [BX]"],
+      ["MOV AX", "WORD PTR [BP+04h]"],
+    ])("accepts valid memory operand %s, %s", (instruction, operand) => {
+      const source = operand.includes("variable")
+        ? `variable DW 1234h\n${instruction}, ${operand}`
+        : `${instruction}, ${operand}`;
+      expect(errorsOf(assemble(source, { origin: 0 }))).toEqual([]);
+    });
+
     it("rejects an immediate too large for its field", () => {
       const result = assemble("MOV AL, 1234h", { origin: 0 });
       expect(result.errors.length).toBeGreaterThan(0);

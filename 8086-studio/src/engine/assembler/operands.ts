@@ -315,22 +315,6 @@ function parseMemory(
       continue;
     }
 
-    if (token.kind === "ident" && !isReg16(token.text) && !isReg8(token.text)) {
-      // A symbol, possibly a far pointer expression.
-      const before = parser.position;
-      const result = parser.parse();
-      if (result.usesLocationCounter) {
-        diagnostics.error(token.line, token.column, "the location counter cannot be used inside a memory operand");
-      } else if (!result.resolved) {
-        diagnostics.error(token.line, token.column, `undefined symbol in memory operand`);
-      } else {
-        constantParts.push(pendingSign * result.value);
-      }
-      if (parser.position === before) parser.position++;
-      first = false;
-      continue;
-    }
-
     if (token.kind === "ident") {
       const upper = token.text.toUpperCase();
       if (ADDRESS_REGISTERS.has(upper)) {
@@ -357,6 +341,32 @@ function parseMemory(
         first = false;
         continue;
       }
+
+      if (isReg16(upper) || isReg8(upper) || isSegmentReg(upper)) {
+        diagnostics.error(
+          token.line,
+          token.column,
+          `${upper} cannot be used in an 8086 effective address; use BX, BP, SI, or DI`,
+        );
+        parser.position++;
+        pendingSign = 1;
+        first = false;
+        continue;
+      }
+
+      // A symbol, possibly a far pointer expression.
+      const before = parser.position;
+      const result = parser.parse();
+      if (result.usesLocationCounter) {
+        diagnostics.error(token.line, token.column, "the location counter cannot be used inside a memory operand");
+      } else if (!result.resolved) {
+        diagnostics.error(token.line, token.column, `undefined symbol in memory operand`);
+      } else {
+        constantParts.push(pendingSign * result.value);
+      }
+      if (parser.position === before) parser.position++;
+      first = false;
+      continue;
     }
 
     // Anything else: a constant expression.
