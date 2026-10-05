@@ -311,6 +311,37 @@ describe('the input a prompt collects, in the shape each engine reads', () => {
     expect(panel).toContain(SUCCESS);
   });
 
+  it('gives a collected line to a DOS line read as count, characters, and CR', () => {
+    // The first test only reads two characters, so it would pass even if the
+    // conversion appended no CR at all. This one reads the line the way DOS
+    // does — AH=0Ah buffers it — and has the program report the buffer back
+    // through its own output: the count byte (2, not 3: the CR does not
+    // count), both stored characters, and the CR in the byte after them.
+    const source = [
+      'MOV AL, 10h', // the capacity byte the service insists on
+      'MOV [0200h], AL',
+      'MOV DX, 0200h',
+      'MOV AH, 0Ah',
+      'INT 21h',
+      'MOV DL, [0201h]', // count, printed raw
+      'MOV AH, 02h',
+      'INT 21h',
+      'MOV DL, [0202h]',
+      'MOV AH, 02h',
+      'INT 21h',
+      'MOV DL, [0203h]',
+      'MOV AH, 02h',
+      'INT 21h',
+      'MOV DL, [0204h]', // where the CR has to be
+      'MOV AH, 02h',
+      'INT 21h',
+      'HLT',
+    ].join('\n');
+    const panel = runSourceToPanelText('v2', source, () => ({ kind: 'value', value: 'Hi' }));
+    expect(panel).toContain('\x02Hi\r');
+    expect(panel).toContain(SUCCESS);
+  });
+
   it('says so when a v2 run is cancelled at its line prompt', () => {
     // Reachable now that v2 asks at all: the prompt exists, so cancelling it
     // has to stop the run the same way it does on the legacy.

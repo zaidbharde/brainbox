@@ -299,6 +299,19 @@ describe('input, which the two engines do differently', () => {
     expect(state.halted).toBe(true);
     expect(state.registers.AX & 0xff).toBe(0x41);
   });
+
+  it('steps a v2 input program with no queue: it finishes, reads zero, errors on nothing', () => {
+    // The empty-queue behavior above is asserted through runToCompletion; this
+    // is the other path that hits it — the step loop the debug view runs, whose
+    // session exists before any prompt could be answered, so its queue is
+    // always empty. Same discriminators, other entry point: termination
+    // instead of a hang, the defined zero instead of the stale 41h in AL, and
+    // no error on the way to the halt.
+    const s = runToEnd('v2', 'MOV AX, 4241h\nMOV AH, 01h\nINT 21h\nHLT\n');
+    expect(s.state.halted).toBe(true);
+    expect(s.state.error).toBeFalsy();
+    expect(s.state.registers.AX & 0xff).toBe(0);
+  });
 });
 
 describe('the two engines agree where both are defined', () => {
