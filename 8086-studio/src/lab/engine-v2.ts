@@ -215,6 +215,129 @@ function buildCpu(assembly: V2Assembly, inputValues: readonly number[]): Cpu {
 }
 
 /**
+ * Whether a program reads input, for deciding whether Run should ask for any.
+ *
+ * Prompting every program is not an option: `INT 21h` is also how programs
+ * print and exit, so asking on the vector alone would ask every program that
+ * prints. The assembled code is walked from the entry point instead, following
+ * branches, calls and jumps while tracking the value of AH along each path, and
+ * the program counts as reading input when the walk reaches:
+ *
+ * - `INT 21h` with AH one of 01h, 07h, 08h or 0Ah — the character and line
+ *   reads;
+ * - `INT 16h` with AH 00h or 01h — the BIOS reads implemented here;
+ * - either vector when AH cannot be determined. That fails safe, deliberately:
+ *   an occasional prompt for a program that will not read is cheap, while a
+ *   program that reads and is not asked goes back to silently finding zero,
+ *   which is the very gap this exists to close.
+ *
+ * `IN` does not count. It reads a port window that only `OUTP` writes on this
+ * engine, so a collected number would never reach it — numbers-per-`IN` is the
+ * legacy's answer, and the legacy keeps it.
+ *
+ * The walk stops at HLT, the returns, INT 20h, the exit service and
+ * undecodable bytes, so data placed after the end of the program is not
+ * mistaken for code, and it follows only relative transfer targets: a jump
+ * through a register has no address to follow, and its target is not searched.
+ * AH is tracked as it is set linearly along a path, so `MOV AH, [bx]` or an
+ * arithmetic operation on AH before a service call reads as unknown — which,
+ * per the rule above, still prompts.
+ */
+export function programReadsInput(assembly: V2Assembly): boolean {
+  const code = assembly.segments.find((segment) => segment.base === assembly.entry.codeBase);
+  if (!code) return false;
+  const { origin, bytes } = code;
+  const start = assembly.entry.ip - origin;
+  if (start < 0 || start >= bytes.length) return false;
+
+  // Offset -> the AH it was last walked with, -1 standing for unknown. An
+  // offset reached again with a different AH is a different question and is
+  // walked again; reached with the same one, it is the merge of two paths and
+  // need not be. The budget bounds a program built to defeat that.
+  const seen = new Map<number, number>();
+  const work: { index: number; ah: number }[] = [{ index: start, ah: -1 }];
+  let budget = 10_000;
+
+  /** Whether an instruction writes AH or AX, which is what tracking is about. */
+  const writesAh = (insn: DecodedInstruction): boolean => {
+    const dst = insn.operands[0];
+    return (dst?.kind === "reg8" && dst.name === "AH") || (dst?.kind === "reg16" && dst.name === "AX");
+  };
+
+  while (work.length > 0 && budget-- > 0) {
+    const { index, ah } = work.pop()!;
+    if (index < 0 || index >= bytes.length) continue;
+    if (seen.get(index) === ah) continue;
+    seen.set(index, ah);
+
+    const insn = decode(bytes.subarray(index, index + 16));
+    if (!insn.ok || insn.length <= 0) continue;
+    const after = index + insn.length;
+    const dst = insn.operands[0];
+    const src = insn.operands[1];
+
+    const vector = insn.mnem === "INT" && dst?.kind === "imm" ? dst.value & 0xff : -1;
+    if (vector === 0x21) {
+      if (ah === -1 || ah === 0x01 || ah === 0x07 || ah === 0x08 || ah === 0x0a) return true;
+    } else if (vector === 0x16) {
+      if (ah === -1 || ah === 0x00 || ah === 0x01) return true;
+    }
+
+    // What this instruction leaves in AH, for the paths continuing from it.
+    let nextAh = ah;
+    if (writesAh(insn)) {
+      if (insn.mnem === "MOV" && src?.kind === "imm") {
+        nextAh = dst?.kind === "reg16" ? (src.value >> 8) & 0xff : src.value & 0xff;
+      } else if (
+        (insn.mnem === "XOR" || insn.mnem === "SUB") &&
+        dst?.kind === src?.kind &&
+        dst?.kind !== undefined &&
+        "name" in dst &&
+        src !== undefined &&
+        "name" in src &&
+        dst.name === src.name
+      ) {
+        // XOR AH,AH and SUB AH,AH zero AH, and they are the idiom for it.
+        nextAh = 0;
+      } else {
+        // Anything else that writes AH — POP, INC, arithmetic — leaves a value
+        // this walk will not guess.
+        nextAh = -1;
+      }
+    }
+
+    // The program stops here; what follows is data or dead code, and walking
+    // into it would be guessing.
+    if (
+      insn.mnem === "HLT" ||
+      insn.mnem === "RET" ||
+      insn.mnem === "RETF" ||
+      insn.mnem === "IRET" ||
+      (insn.mnem === "INT" && (vector === 0x20 || (vector === 0x21 && ah === 0x4c)))
+    ) {
+      continue;
+    }
+    if (insn.mnem === "JMP") {
+      // Only a relative jump has a target the bytes can name. `target` is
+      // relative to the instruction it belongs to, which is where this walk
+      // is standing, so the byte index it leads to is index plus target.
+      if (dst?.kind === "rel") work.push({ index: index + dst.target, ah: nextAh });
+      continue;
+    }
+    const branches = (insn.mnem.startsWith("J") && insn.mnem !== "JMP") || insn.mnem.startsWith("LOOP");
+    if (branches || insn.mnem === "CALL") {
+      // Both outcomes: the taken path and the one that falls through. A call
+      // also returns, so its fallthrough is the caller's next instruction.
+      if (dst?.kind === "rel") work.push({ index: index + dst.target, ah: nextAh });
+      work.push({ index: after, ah: nextAh });
+      continue;
+    }
+    work.push({ index: after, ah: nextAh });
+  }
+  return false;
+}
+
+/**
  * A program being debugged by the new engine.
  *
  * One of these owns the engine's own state, so a step is a real step: there is no
@@ -237,6 +360,8 @@ export class V2Session {
    * stepped is to reassemble from the same thing rather than rewind.
    */
   private readonly assembly: V2Assembly;
+  /** What Run should ask for before running: one line, or nothing. */
+  private readonly inputPromptNames: readonly string[];
   private outputLength = 0;
 
   private constructor(
@@ -249,6 +374,7 @@ export class V2Session {
     this.codeSegment = codeSegment;
     this.sourceMap = sourceMap;
     this.assembly = assembly;
+    this.inputPromptNames = programReadsInput(assembly) ? ["input"] : [];
     this.mirror = new Uint8Array(SEGMENT_SIZE);
     this.refreshMemory();
   }
@@ -501,27 +627,26 @@ export class V2Session {
   }
 
   /**
-   * Nothing to prompt for, because this engine has no per-instruction input.
+   * One prompt when the program reads input, none when it does not.
    *
-   * The legacy is the one with a static answer: it has no DOS read services at
-   * all, so its entire input model is the Run button writing a number into the
-   * port window for each `IN` to read, and a program using it names its inputs
-   * in the source.
+   * The legacy names its inputs after the ports of each `IN`, because there a
+   * number per instruction is the whole input model. This engine's input is a
+   * character queue behind the DOS and BIOS read services, so the prompt
+   * collects a line of text instead, and the queue is filled with that line's
+   * characters and the CR that ends it. One prompt covers every service,
+   * because a terminal has one stream however many calls read from it.
    *
-   * This engine inverts both halves. `IN` reads a port window that only `OUTP`
-   * writes, so a number collected for an `IN` would never be read; and the input
-   * that does work here is a character queue behind the DOS read services, whose
-   * length is decided by how many times the program asks rather than by what is
-   * in the source, so there is nothing to count up front. A program using those
-   * services therefore prompts for nothing and reads an empty queue.
+   * `programReadsInput` decides whether to ask at all, by finding the read
+   * services in the assembled program. A program that only prints is not
+   * asked — the old answer here was "nothing, ever", which was safe but left
+   * every input-reading program silently finding an empty queue.
    *
-   * Empty is a defined answer rather than a hang: the queue is finite and
-   * returns zero when it runs dry, so a run behaves instead of waiting for a
-   * keystroke that the debugger cannot deliver. Wiring a real input stream is
-   * the remaining work here, and it belongs with the debug view's rewrite.
+   * What is still empty is a stepping session: it was built before any prompt
+   * could be answered, so the debug view reads a queue no one has filled.
+   * That is the remaining half of this engine's input story.
    */
   inputPrompts(): readonly string[] {
-    return [];
+    return this.inputPromptNames;
   }
 
   /**

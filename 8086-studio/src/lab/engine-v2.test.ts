@@ -6,7 +6,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { V2Session, buildV2SourceMap, findV2SourceLine } from '@/lab/engine-v2';
+import { V2Session, assembleV2, buildV2SourceMap, findV2SourceLine, programReadsInput } from '@/lab/engine-v2';
 import type { V2SourceMapEntry } from '@/lab/engine-v2';
 
 /** Assemble and step, failing loudly if the program did not even assemble. */
@@ -222,5 +222,73 @@ describe('buildV2SourceMap', () => {
     const map: V2SourceMapEntry[] = [{ sourceLine: 1, segment: 'CODE', instructionStart: 0x100, instructionEnd: 0x102 }];
     expect(findV2SourceLine(map, 'CODE', 0x103)).toBeNull();
     expect(findV2SourceLine([], 'CODE', 0x100)).toBeNull();
+  });
+});
+
+describe('programReadsInput, which decides whether Run asks', () => {
+  /** Whether this program would get the line prompt. */
+  const readsInput = (source: string): boolean => programReadsInput(assembleV2(source));
+
+  it('finds the DOS character and line reads', () => {
+    expect(readsInput('MOV AH, 1\nINT 21h\nHLT')).toBe(true);
+    expect(readsInput('MOV AH, 7\nINT 21h\nHLT')).toBe(true);
+    expect(readsInput('MOV AH, 8\nINT 21h\nHLT')).toBe(true);
+    expect(readsInput('MOV DX, 200h\nMOV AH, 0Ah\nINT 21h\nHLT')).toBe(true);
+    // AX set as a whole counts too: the service is its high byte.
+    expect(readsInput('MOV AX, 0100h\nINT 21h\nHLT')).toBe(true);
+  });
+
+  it('finds the BIOS keyboard reads, however AH was set', () => {
+    expect(readsInput('MOV AH, 0\nINT 16h\nHLT')).toBe(true);
+    expect(readsInput('XOR AH, AH\nINT 16h\nHLT')).toBe(true);
+    expect(readsInput('MOV AH, 1\nINT 16h\nHLT')).toBe(true);
+  });
+
+  it('does not ask a program that only prints, exits or reads a port', () => {
+    // INT 21h is how programs print and exit, so the vector on its own is not
+    // a reason to prompt — only the read services are.
+    expect(readsInput("MOV DX, msg\nMOV AH, 09h\nINT 21h\nmsg DB 'ok$'\nHLT")).toBe(false);
+    expect(readsInput('MOV AX, 4C00h\nINT 21h')).toBe(false);
+    expect(readsInput('IN AL, 30h\nHLT')).toBe(false);
+  });
+
+  it('asks when AH cannot be known, rather than miss a reader', () => {
+    // The failure is asymmetric on purpose: one prompt for a program that will
+    // not read is a dialog to dismiss, while not asking a program that will
+    // reads zero again — the silent defect this whole mechanism exists to end.
+    expect(readsInput('MOV AH, BL\nINT 21h\nHLT')).toBe(true);
+  });
+
+  it('follows branches and calls, so a read off the first path is still found', () => {
+    expect(
+      readsInput('CMP AX, 0\nJZ read\nMOV AX, 4C00h\nINT 21h\nread:\n  MOV AH, 1\n  INT 21h\n  HLT'),
+    ).toBe(true);
+    expect(
+      readsInput('CALL reader\nMOV AX, 4C00h\nINT 21h\nreader:\n  MOV AH, 1\n  INT 21h\n  RET'),
+    ).toBe(true);
+  });
+
+  it('stops where the program stops, so bytes after it are not code', () => {
+    // The bytes of data are arbitrary; decoded as instructions they can be
+    // exactly `MOV AH, 01h; INT 21h` — a read service the program never
+    // calls. Stopping at the exit service and at HLT is what keeps that out.
+    expect(readsInput('MOV AX, 4C00h\nINT 21h\nmsg DB 0B4h, 01h, 0CDh, 21h')).toBe(false);
+    expect(readsInput('MOV AH, 09h\nINT 21h\nHLT\nmsg DB 0B4h, 01h, 0CDh, 21h')).toBe(false);
+  });
+
+  it('follows a jump over data instead of walking into it', () => {
+    // The data is a read service in disguise; only the jump target's path is
+    // real code, and it only prints.
+    expect(readsInput('JMP run\nmsg DB 0B4h, 01h, 0CDh, 21h\nrun:\n  MOV AH, 09h\n  INT 21h\n  HLT')).toBe(
+      false,
+    );
+  });
+
+  it('starts where execution starts, not where the program was loaded', () => {
+    // Data before the first instruction is the same disguise as data after
+    // it. The entry point is the first instruction, so the walk begins past
+    // it — begin at the load address instead and the program's own print call
+    // would be reached with AH left over from the data.
+    expect(readsInput('msg DB 0B4h, 01h, 0CDh, 21h\nMOV AH, 09h\nINT 21h\nHLT')).toBe(false);
   });
 });

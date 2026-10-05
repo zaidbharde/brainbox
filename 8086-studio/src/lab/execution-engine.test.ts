@@ -256,24 +256,48 @@ describe('input, which the two engines do differently', () => {
     expect(state.memory[0x200]).toBe(7);
   });
 
-  it('asks for nothing on the new engine, because a number would not be read', () => {
-    // A v2 program's input is a character queue behind the DOS read services, and
-    // its `IN` reads a port window that only `OUTP` writes. So neither the
-    // per-`IN` number the legacy wants nor the declared `input` names would ever
-    // be read, and the count is not knowable before the program runs. Returning
-    // nothing is the honest answer; a prompt the engine ignores would be worse.
+  it('asks for nothing on the new engine for an IN, whose reads come from OUTP', () => {
+    // A v2 program's `IN` reads a port window that only `OUTP` writes, so the
+    // per-`IN` number the legacy wants would never be read, and asking for it
+    // would collect a value with nothing to read it. Numbers-per-`IN` is the
+    // legacy's answer and the legacy keeps it; the new engine's answer to the
+    // DOS read services is the next test.
     expect(session('v2', 'IN AL, 30h\nHLT\n').inputPrompts()).toEqual([]);
-    expect(session('v2', 'MOV AH, 01h\nINT 21h\nHLT\n').inputPrompts()).toEqual([]);
+  });
+
+  it('asks once on the new engine when a DOS or BIOS read service is used', () => {
+    // One prompt for all of them, not one per call site: the input is a
+    // character queue behind these services, and a terminal has one stream
+    // however many calls draw from it. The character read, the line read and
+    // the BIOS keyboard read all take from that one stream.
+    expect(session('v2', 'MOV AH, 01h\nINT 21h\nHLT\n').inputPrompts()).toEqual(['input']);
+    expect(session('v2', 'MOV DX, 200h\nMOV AH, 0Ah\nINT 21h\nHLT\n').inputPrompts()).toEqual(['input']);
+    expect(session('v2', 'MOV AH, 0\nINT 16h\nHLT\n').inputPrompts()).toEqual(['input']);
+    // And a program that only prints is not asked: INT 21h is also how
+    // programs print and exit, so the vector on its own must not prompt.
+    expect(session('v2', "MOV DX, msg\nMOV AH, 09h\nINT 21h\nmsg DB 'ok$'\nHLT\n").inputPrompts()).toEqual([]);
   });
 
   it('runs a v2 program that asks for input, reading an empty queue rather than hanging', () => {
-    // The point of the empty list being safe: DOS blocks on real hardware, so
-    // this has to terminate. The queue is finite and returns zero when dry.
-    const { state } = session('v2', 'MOV AX, 0\nMOV AH, 01h\nINT 21h\nHLT\n').runToCompletion([], 10_000);
+    // The point of being able to run with no input at all: DOS blocks on real
+    // hardware, so this has to terminate. The queue is finite and returns zero
+    // when dry — explicitly zero, which is why AL is pre-set here: a stale
+    // character left behind would be the same silent-wrong-answer bug in
+    // another form.
+    const { state } = session('v2', 'MOV AX, 4241h\nMOV AH, 01h\nINT 21h\nHLT\n').runToCompletion([], 10_000);
     expect(state.halted).toBe(true);
     expect(state.error).toBeFalsy();
-    // AL is the character read, and a dry queue leaves it as the program had it.
+    // AH is the service the caller selected; AL is the character, which the
+    // dry queue answered with zero.
     expect(state.registers.AX & 0xff).toBe(0);
+  });
+
+  it('runs a v2 program with the input the prompt collected', () => {
+    // The other half of the same story: the prompt's line reaches the queue,
+    // the service reads the first character of it, and the program has it.
+    const { state } = session('v2', 'MOV AH, 01h\nINT 21h\nHLT\n').runToCompletion([0x41], 10_000);
+    expect(state.halted).toBe(true);
+    expect(state.registers.AX & 0xff).toBe(0x41);
   });
 });
 

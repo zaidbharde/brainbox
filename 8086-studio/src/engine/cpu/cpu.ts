@@ -458,11 +458,20 @@ export class Cpu {
         case 0x01:
         case 0x07:
         case 0x08: {
-          if (this.inputIndex < this.input.length) {
-            const value = this.input[this.inputIndex++];
-            // AH=08 does not echo, AH=01/07 put the character in AL.
-            if (ah !== 0x08) this.setAL(value);
-          }
+          // All three return the character in AL: on real DOS they differ only
+          // in Ctrl-Break handling and in whether the character is echoed, and
+          // neither is modeled here. Echo in particular would be pretending —
+          // the input arrives from a dialog rather than a keyboard, so there is
+          // nothing to echo to, and the output panel shows what the program
+          // prints rather than what the user typed.
+          //
+          // An exhausted queue returns zero rather than blocking. DOS would
+          // wait for a keystroke; a browser cannot, and a program in a loop
+          // reading until it sees something has to see something definite. Zero
+          // is that value, the same one every read below gives when the queue
+          // runs dry.
+          const value = this.inputIndex < this.input.length ? this.input[this.inputIndex++] : 0;
+          this.setAL(value);
           return;
         }
         case 0x0a: {
@@ -472,6 +481,41 @@ export class Cpu {
         default:
           this.state.halted = true;
           this.state.error = `unsupported INT 21h service ${ah.toString(16)}h`;
+          return;
+      }
+    }
+    if (vector === 0x16) {
+      // BIOS keyboard services, reading the same queue as the DOS services
+      // above: a program that mixes them reads one stream, not two.
+      switch (ah) {
+        case 0x00: {
+          // Read the next key into AL. The scan code — the high byte of AX —
+          // is not modeled, because the queue holds character codes only, so
+          // AH stays what the caller set it to for this call: zero. Exhaustion
+          // returns AL=0 rather than blocking, for the same reason AH=01h
+          // above does.
+          this.setAL(this.inputIndex < this.input.length ? this.input[this.inputIndex++] : 0);
+          return;
+        }
+        case 0x01: {
+          // Status: report the next key without taking it. A key waiting sets
+          // ZF=0 and puts it in AX — with the unmodeled scan code reading as 0
+          // in AH — and leaves the queue alone, so the AH=00h read that
+          // typically follows still gets it. No key waiting sets ZF=1 and
+          // leaves AX alone, which is the whole answer a program testing ZF
+          // needs.
+          if (this.inputIndex < this.input.length) {
+            this.setAL(this.input[this.inputIndex]);
+            this.writeReg8(4, 0);
+            this.state.FLAGS = setFlag(this.state.FLAGS, "ZF", false);
+          } else {
+            this.state.FLAGS = setFlag(this.state.FLAGS, "ZF", true);
+          }
+          return;
+        }
+        default:
+          this.state.halted = true;
+          this.state.error = `unsupported INT 16h service ${ah.toString(16)}h`;
           return;
       }
     }
@@ -500,6 +544,11 @@ export class Cpu {
    * find the second one still waiting, not a hole. There is no input to read
    * here, which is not an error, so this is an empty line and the buffer says so
    * with a count of zero.
+   *
+   * Input that stops before a CR — the queue ran dry mid-line — stores what
+   * arrived and no terminator: the count says how much is there, and the bytes
+   * beyond it are the program's own, untouched. Real DOS would keep waiting for
+   * Enter; this returns instead, as every read does when the queue runs dry.
    */
   private readLine(): void {
     this.setAL(0);

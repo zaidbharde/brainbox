@@ -284,6 +284,41 @@ describe('the Output panel, when a run cannot start', () => {
   });
 });
 
+describe('the input a prompt collects, in the shape each engine reads', () => {
+  /** Read a character and print it. */
+  const ECHO = ['MOV AH, 01h', 'INT 21h', 'MOV DL, AL', 'MOV AH, 02h', 'INT 21h'];
+
+  /** Reads and prints one character, then stops. */
+  const ECHO_ONCE = [...ECHO, 'HLT'].join('\n');
+
+  /** The same twice, so a queue of more than one byte has somewhere to show. */
+  const ECHO_TWICE = [...ECHO, ...ECHO, 'HLT'].join('\n');
+
+  it('feeds a collected line to the new engine as characters ending in CR', () => {
+    // The new engine's prompt collects text, so 'Hi' becomes its two
+    // characters plus the Enter that confirming the dialog stands for: three
+    // bytes of queue, two of which this program reads back out.
+    const panel = runSourceToPanelText('v2', ECHO_TWICE, () => ({ kind: 'value', value: 'Hi' }));
+    expect(panel).toContain('Hi');
+    expect(panel).toContain(SUCCESS);
+  });
+
+  it('feeds a number to the new engine as one raw byte, and no CR', () => {
+    // The number form is the precise one — a single byte of queue, nothing
+    // appended — which is what a test wanting exactly one key hands over.
+    const panel = runSourceToPanelText('v2', ECHO_ONCE, () => ({ kind: 'value', value: 65 }));
+    expect(panel).toContain('A');
+    expect(panel).toContain(SUCCESS);
+  });
+
+  it('says so when a v2 run is cancelled at its line prompt', () => {
+    // Reachable now that v2 asks at all: the prompt exists, so cancelling it
+    // has to stop the run the same way it does on the legacy.
+    const panel = runSourceToPanelText('v2', 'MOV AH, 01h\nINT 21h\nHLT', () => ({ kind: 'cancelled' }));
+    expect(panel).toBe('Run cancelled by user.');
+  });
+});
+
 /**
  * The invariant that ties the two halves of the lab together.
  *

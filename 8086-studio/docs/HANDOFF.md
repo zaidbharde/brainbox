@@ -352,17 +352,24 @@ than the bug.
 
 ### A real input stream for the new engine
 
-`inputPrompts()` returning an empty list is safe, not working. The Run button cannot
-give the new engine input. The engine's input is a character queue behind the DOS
-read services, so the prompt needs to collect text and feed character codes rather
-than numbers per `IN`. `INT 21h` `01h`, `07h` and `0Ah`, and `INT 16h`, are the
-cases to cover. On the legacy these work through the numbers-per-`IN` path, which
-is why the difference is a gap and not a divergence.
+The Run half is done. `inputPrompts()` returns one prompt — `input` — when the
+assembled program uses a read service: `INT 21h` `01h`, `07h`, `08h` or `0Ah`, or
+`INT 16h` `00h`/`01h`. The answer is found by walking the code from the entry
+point with AH tracked along each path, so a program that only prints or exits is
+not asked. The prompt collects a line of text; its characters and the trailing CR
+become the queue the services read. A number handed to the same prompt is one raw
+byte, which is what tests use. On the legacy nothing changed: it still takes one
+number per `IN`.
+
+What is not wired is the stepping session. The debug view's queue is built empty,
+because the session exists before any prompt could be answered, so a program that
+reads input runs correctly under Run and reads zero under Step. That is the
+remaining half, and it belongs with the debug view.
 
 ### The one accepted `typecheck` error
 
 ```
-src/emulator/assembler.ts(126,10): error TS6133: 'isByteRegister' is declared but its value is never read.
+src/emulator/assembler.ts(148,10): error TS6133: 'isByteRegister' is declared but its value is never read.
 ```
 
 `isByteRegister` is genuinely unused. It stays because removing it means editing the

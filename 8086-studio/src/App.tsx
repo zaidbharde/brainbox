@@ -1507,6 +1507,19 @@ export function App() {
     // parameter of `runSourceToPanel` rather than something read from a module, so
     // the fix is to re-create this function when it changes.
     return runSourceToPanel(engine, source, (port, index) => {
+      // The two engines take input in different shapes, so the dialog is the
+      // engine's to choose. The legacy wants a number for a port read; the new
+      // engine reads a character queue, so it gets a line of text and its
+      // characters are what the queue is filled with. Asking for a number on v2
+      // would collect one byte of a line, and asking for text on the legacy
+      // would not be a number at all.
+      if (engine === 'v2') {
+        const raw = window.prompt('Enter a line of input:', '');
+        if (raw === null) {
+          return { kind: 'cancelled' };
+        }
+        return { kind: 'value', value: raw };
+      }
       const raw = window.prompt(`Input required for IN port ${port} (#${index})`, '0');
       if (raw === null) {
         return { kind: 'cancelled' };
@@ -1630,19 +1643,33 @@ export function App() {
         .map((line) => line.match(/^input\s+([A-Za-z_][A-Za-z0-9_]*)$/)?.[1] ?? null)
         .filter((name): name is string => name !== null);
       // The engines take input in different shapes, so the prompt is asked of the
-      // engine rather than decided here. The legacy wants one number per `IN` and
-      // says which port; the new engine wants a character queue whose length the
-      // program decides at run time, and a number collected for an `IN` would
-      // never be read by it, so it asks for nothing and the run reads a defined
-      // empty queue. Collecting a value here that the engine then ignores would be
-      // worse than not asking: the run would look fed when it was not.
+      // engine rather than decided here. The legacy wants one number per `IN`,
+      // named after the declared inputs when the source declares any. The new
+      // engine answers with its own list: a line of text when the assembled
+      // program reads one of the DOS or BIOS input services, and nothing when it
+      // does not — which is every program this compiler produces, since its
+      // `input` statement emits no instruction for either engine's input to be
+      // read from. Asking anyway would collect a value with nothing to read it,
+      // and the run would look fed when it was not.
       const inputPrompts = engine === 'legacy'
         ? (sourceInputVars.length > 0
             ? sourceInputVars
             : session.inputPrompts().map((_, index) => `input_${index + 1}`))
-        : [];
+        : session.inputPrompts();
       const inputs: number[] = [];
       for (const inputName of inputPrompts) {
+        if (engine === 'v2') {
+          // Text, like the assembly editor's Run: the queue takes characters,
+          // and the dialog's OK is the Enter that ends the line.
+          const raw = window.prompt('Enter a line of input:', '');
+          if (raw === null) {
+            setPanel('Run cancelled by user.', engine);
+            setEditorTab('output');
+            return;
+          }
+          inputs.push(...[...raw].map((character) => character.charCodeAt(0) & 0xff), 0x0d);
+          continue;
+        }
         const raw = window.prompt(`Enter value for ${inputName}:`, '0');
         if (raw === null) {
           setPanel('Run cancelled by user.', engine);

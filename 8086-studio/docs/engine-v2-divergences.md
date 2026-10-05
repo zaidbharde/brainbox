@@ -488,18 +488,39 @@ from the compiler's own `AssembledProgram`.
 
 ### A real input stream for the new engine
 
-`inputPrompts()` returning an empty list is a safe answer, not a working one. The
-new engine needs an input stream the Run button can actually write to — most
-plausibly by having the prompt collect text and feed its character codes to the DOS
-read services, which is the shape the engine already expects. This belongs with the
-debug view work, since a program that reads input is a program you want to step.
+The Run button gives the new engine input, in the shape its engine expects.
+`inputPrompts()` returns one prompt — `input` — when the assembled program uses a
+read service (`INT 21h` `01h`/`07h`/`08h`/`0Ah`, or `INT 16h` `00h`/`01h`),
+found by walking the code from the entry point with AH tracked along each path,
+and nothing when it does not — which is every program the frontend compiler
+produces, since its `input` statement emits no instruction. The legacy, which has
+no DOS read services at all, keeps its own answer: one number per `IN`, named for
+the port.
+
+The new engine's dialog collects a line of text rather than a number: its
+characters, plus the CR that confirming the dialog stands for, become the queue
+the DOS and BIOS services read — one stream, however many calls draw from it. A
+number handed to the same prompt is one raw byte, the shape tests use. Deliberate
+differences from real DOS, each recorded where it happens:
+
+- Every read returns zero when the queue runs dry instead of blocking. DOS would
+  wait for a keystroke; a browser cannot.
+- Nothing echoes. Real DOS echoes `01h`/`07h` reads back to the terminal; input
+  here arrives from a dialog, and the output panel shows what the program prints.
+- The BIOS scan code is not modeled, so `INT 16h` reports 0 in AH — the queue
+  holds character codes only.
+- A line whose input ends before a CR stores what arrived and no terminator.
+
+Still unwired is the stepping session: the debug view reads a queue no one has
+filled, because the session exists before any prompt could be answered. A program
+that reads input runs correctly under Run and reads zero under Step.
 
 ### A known, accepted `typecheck` failure
 
 `npm run typecheck` reports one error, and it is in the legacy:
 
 ```
-src/emulator/assembler.ts(126,10): error TS6133: 'isByteRegister' is declared but its value is never read.
+src/emulator/assembler.ts(148,10): error TS6133: 'isByteRegister' is declared but its value is never read.
 ```
 
 `isByteRegister` is genuinely unused. It is left in place because deleting it is a

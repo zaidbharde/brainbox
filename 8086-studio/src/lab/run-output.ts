@@ -55,17 +55,23 @@ export function formatProgramOutput(output: readonly ProgramOutput[]): string {
 }
 
 /**
- * Asked for a value when a program reads from a port.
+ * Asked for a value when a program reads input.
  *
  * The three outcomes are spelled out rather than collapsed into `number | null`
  * because two of them carry text the panel has to show: a cancelled run and a
  * number the person typed that is not one. Returning `NaN` for the last case
  * would have thrown the message away.
+ *
+ * A `number` is one raw byte — the legacy's number-per-`IN`, and the precise
+ * answer for a test. A `string` is a line of text: it becomes the queue's
+ * characters plus the CR that ends them, which is what the new engine's DOS
+ * and BIOS read services consume. The engine the prompt came from decides
+ * which is asked for; this type carries both so one caller can serve either.
  */
 export type InputRequest = (
   name: string,
   index: number,
-) => { kind: 'value'; value: number } | { kind: 'cancelled' } | { kind: 'invalid'; text: string };
+) => { kind: 'value'; value: number | string } | { kind: 'cancelled' } | { kind: 'invalid'; text: string };
 
 /** How many steps a run is allowed before it is called off. */
 const DEFAULT_MAX_STEPS = 10_000;
@@ -137,9 +143,10 @@ export function runSourceToPanel(
   const inputs: number[] = [];
   const prompts = session.inputPrompts();
   for (let i = 0; i < prompts.length; i++) {
-    // With nothing to ask with, port reads get 0. A caller that wants to be asked
-    // passes a function; a test that does not care about input should not have to
-    // stub a prompt to get to the output.
+    // With nothing to ask with, input reads get 0 — a defined empty queue on
+    // the new engine, the port window's zero on the legacy. A caller that wants
+    // to be asked passes a function; a test that does not care about input
+    // should not have to stub a prompt to get to the output.
     const request = requestInput ? requestInput(prompts[i], i + 1) : { kind: 'value' as const, value: 0 };
     if (request.kind === 'cancelled') {
       return { engine, kind: 'output', text: 'Run cancelled by user.', diagnostics: [] };
@@ -152,7 +159,18 @@ export function runSourceToPanel(
         diagnostics: [],
       };
     }
-    inputs.push(request.value);
+    if (typeof request.value === 'string') {
+      // A collected line, for the engine that reads characters: each code
+      // becomes a byte of the queue, and the CR is the Enter the person
+      // pressed by confirming the dialog. A line that runs to characters
+      // above 0xFF is masked, since the queue holds bytes.
+      for (const character of request.value) {
+        inputs.push(character.charCodeAt(0) & 0xff);
+      }
+      inputs.push(0x0d);
+    } else {
+      inputs.push(request.value);
+    }
   }
 
   const { state, output } = session.runToCompletion(inputs, maxSteps);

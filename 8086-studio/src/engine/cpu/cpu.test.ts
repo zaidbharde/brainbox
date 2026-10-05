@@ -1501,20 +1501,51 @@ describe("interrupts", () => {
   });
 
   it("puts the next input character in AL for AH=01", () => {
-    // AH=01 and AH=07 read one character and leave it in AL. Two calls consume
-    // two characters, and AL ends up holding the second -- which is the only
-    // thing that distinguishes a queue from a single slot.
+    // AH=01, AH=07 and AH=08 read one character and leave it in AL. Two calls
+    // consume two characters, and AL ends up holding the second -- which is the
+    // only thing that distinguishes a queue from a single slot.
     const h = com("MOV AH, 1\nINT 21h\nINT 21h\nHLT", {}, { inputValues: [0x41, 0x42] }).run();
     expect(AL(h)).toBe(0x42);
   });
 
+  it("puts the next input character in AL for AH=07, like AH=01", () => {
+    // AH=07 is the no-echo read; with echo not modeled the two services are
+    // the same call, and this pins that they stay that way.
+    const h = com("MOV AH, 7\nINT 21h\nHLT", {}, { inputValues: [0x41] }).run();
+    expect(AL(h)).toBe(0x41);
+    expect(h.cpu.state.error).toBe(null);
+  });
+
+  it("puts the next input character in AL for AH=08", () => {
+    // AH=08 differs from AH=01 only in Ctrl-Break handling, which is not
+    // modeled, so it reads like the others. AL is pre-set here: the bug this
+    // replaces skipped the assignment for AH=08, and a program that had not
+    // touched AL would have hidden it.
+    const h = com("MOV AX, 4241h\nMOV AH, 8\nINT 21h\nHLT", {}, { inputValues: [0x43] }).run();
+    expect(AL(h)).toBe(0x43);
+    expect(h.cpu.state.error).toBe(null);
+  });
+
   it("returns AL=0 from AH=01 when there is no input", () => {
     // Real DOS blocks. A program in the lab must not hang the browser, so the
-    // queue runs dry and the service returns whatever AL already held, which is
-    // zero for a program that did not set it. Nothing is invented.
-    const h = com("MOV AX, 0\nMOV AH, 1\nINT 21h\nHLT", {}, { inputValues: [] }).run();
+    // queue runs dry and the service returns zero -- explicitly, not "whatever
+    // AL happened to hold". The program pre-sets AL precisely to show that:
+    // a stale character left in AL could keep a read-until loop looping, and
+    // zero is the value the engine's own documentation promises.
+    const h = com("MOV AX, 4241h\nMOV AH, 1\nINT 21h\nHLT", {}, { inputValues: [] }).run();
     expect(AL(h)).toBe(0);
     expect(h.cpu.state.error).toBe(null);
+  });
+
+  it("returns AL=0 from AH=07 and AH=08 when there is no input", () => {
+    // The same dry-queue answer for the two sibling services, which share one
+    // path with AH=01: all three read alike, and this pins that they stay
+    // read alike when there is nothing to read.
+    const seven = com("MOV AX, 4241h\nMOV AH, 7\nINT 21h\nHLT", {}, { inputValues: [] }).run();
+    expect(AL(seven)).toBe(0);
+    const eight = com("MOV AX, 4241h\nMOV AH, 8\nINT 21h\nHLT", {}, { inputValues: [] }).run();
+    expect(AL(eight)).toBe(0);
+    expect(eight.cpu.state.error).toBe(null);
   });
 
   it("reads a line into a DOS buffer for AH=0Ah", () => {
@@ -1570,6 +1601,93 @@ describe("interrupts", () => {
     expect(h.memory.read8(0, 0x200)).toBe(1);
     expect(h.memory.read8(0, 0x201)).toBe(0);
     expect(h.memory.read8(0, 0x202)).toBe(0);
+  });
+
+  it("stores what arrived when input ends mid-line without a CR", () => {
+    // The queue ran dry before Enter. DOS would keep waiting for it; this
+    // returns instead, with the count saying what was stored, no terminator
+    // invented, and the program's own bytes past the stored text untouched.
+    const h = seeded(
+      "MOV DX, 200h\nMOV AH, 0Ah\nINT 21h\nHLT",
+      { 0x200: 16 },
+      {},
+      { inputValues: [0x61, 0x62] },
+    );
+    expect(h.memory.read8(0, 0x201)).toBe(2);
+    expect([0, 1].map((n) => h.memory.read8(0, 0x202 + n))).toEqual([0x61, 0x62]);
+    // The byte after the two characters, where a CR would have gone, was never
+    // written.
+    expect(h.memory.read8(0, 0x204)).toBe(0);
+    expect(h.cpu.state.error).toBe(null);
+  });
+
+  it("reads a key into AL for INT 16h AH=00", () => {
+    // The BIOS read takes from the same queue as the DOS services. The scan
+    // code is not modeled, so AH carries nothing new -- it is what the caller
+    // set to select this service, zero.
+    const h = com("MOV AH, 0\nINT 16h\nHLT", {}, { inputValues: [0x41] }).run();
+    expect(AL(h)).toBe(0x41);
+    expect(AH(h)).toBe(0);
+    expect(h.cpu.state.error).toBe(null);
+  });
+
+  it("returns AL=0 from INT 16h AH=00 when there is no input", () => {
+    // The same defined answer as every other read: zero instead of blocking,
+    // with AL pre-set so a stale character could not pass for a key.
+    const h = com("MOV AL, 61h\nMOV AH, 0\nINT 16h\nHLT", {}, { inputValues: [] }).run();
+    expect(AL(h)).toBe(0);
+    expect(h.cpu.state.error).toBe(null);
+  });
+
+  it("reads one key across the DOS and BIOS services, from one queue", () => {
+    // A program that mixes the two families reads a single stream: the DOS
+    // read takes the first key and the BIOS read the second, not both the
+    // first.
+    const h = com(
+      "MOV AH, 1\nINT 21h\nMOV BL, AL\nMOV AH, 0\nINT 16h\nHLT",
+      {},
+      { inputValues: [0x41, 0x42] },
+    ).run();
+    expect(h.reg("BX") & 0xff).toBe(0x41);
+    expect(AL(h)).toBe(0x42);
+  });
+
+  it("reports a waiting key with ZF clear and AX holding it for AH=01", () => {
+    // Status in one call: ZF is what a program branches on, AX is the key it
+    // is about to be given, and the unmodeled scan code reads 0 in AH.
+    const h = com("MOV AH, 1\nINT 16h\nHLT", {}, { inputValues: [0x41] }).run();
+    expect(flag(h, "ZF")).toBe(false);
+    expect(AX(h)).toBe(0x0041);
+    expect(h.cpu.state.error).toBe(null);
+  });
+
+  it("sets ZF for INT 16h AH=01 when no key is waiting", () => {
+    // The program tests ZF and must not be told a key is there. The flag is
+    // the whole answer; nothing else is changed.
+    const h = com("MOV AH, 1\nINT 16h\nHLT", {}, { inputValues: [] }).run();
+    expect(flag(h, "ZF")).toBe(true);
+    expect(h.cpu.state.error).toBe(null);
+  });
+
+  it("leaves the key it reported for INT 16h AH=01 to the next read", () => {
+    // Status peeks: the key comes back in AX but stays in the queue, so the
+    // AH=00h read that follows still gets it.
+    const h = com(
+      "MOV AH, 1\nINT 16h\nMOV BX, AX\nMOV AH, 0\nINT 16h\nHLT",
+      {},
+      { inputValues: [0x41] },
+    ).run();
+    expect(h.reg("BX")).toBe(0x0041);
+    expect(AL(h)).toBe(0x41);
+  });
+
+  it("rejects an INT 16h service it does not implement", () => {
+    // AH=02h reads the shift flags, which this lab does not model. Halted
+    // with a message, the same way an unknown DOS service is refused, rather
+    // than silently doing nothing.
+    const h = com("MOV AH, 2\nINT 16h\nHLT").run();
+    expect(h.cpu.state.halted).toBe(true);
+    expect(h.cpu.state.error).toBe("unsupported INT 16h service 2h");
   });
 
   it("stops a scan with no terminator instead of looping", () => {
