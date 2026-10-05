@@ -156,6 +156,26 @@ describe("assembler", () => {
       expect(at(result, 0, 3)).toEqual([0xb8, 0x21, 0x00]);
     });
 
+    it("preserves a value that briefly exceeds the safe integer range", () => {
+      const result = assemble("n EQU 4503599627370496 * 2 - 9007199254740991\nDB n", { origin: 0 });
+      expect(errorsOf(result)).toEqual([]);
+      expect(bytes(result)).toEqual([0x01]);
+    });
+
+    it("evaluates HIGH and LOW without losing the byte split", () => {
+      const result = assemble("DB LOW 1234h, HIGH 1234h", { origin: 0 });
+      expect(errorsOf(result)).toEqual([]);
+      expect(bytes(result)).toEqual([0x34, 0x12]);
+    });
+
+    it("keeps an EQU overflow exact until a scalar context rejects it", () => {
+      const result = assemble("n EQU 0FFFFFFFFh + 1\nDB n", { origin: 0 });
+      expect(errorsOf(result)).toEqual([
+        "2:4 DB value 4294967296 is out of range; a byte holds -128 to 255",
+      ]);
+      expect(bytes(result)).toEqual([0x00]);
+    });
+
     it("resolves OFFSET of a label", () => {
       const result = assemble("MOV AX, OFFSET buf\nbuf: DB 1", { origin: 0 });
       expect(at(result, 0, 3)).toEqual([0xb8, 0x03, 0x00]);
@@ -226,6 +246,9 @@ describe("assembler", () => {
       ["DW -32769", "DW value -32769 is out of range; a word holds -32768 to 65535"],
       ["DW 0FFFFh + 1", "DW value 65536 is out of range; a word holds -32768 to 65535"],
       ["DB 0FFh * 2", "DB value 510 is out of range; a byte holds -128 to 255"],
+      ["DB 4503599627370496 * 2", "expression value 9007199254740992 exceeds the evaluator's exact integer range"],
+      ["DD 0FFFFFFFFh + 1", "DD value 4294967296 is out of range; a dword holds -2147483648 to 4294967295"],
+      ["DD -2147483648 - 1", "DD value -2147483649 is out of range; a dword holds -2147483648 to 4294967295"],
       [
         "DD -2147483649",
         "DD value -2147483649 is out of range; a dword holds -2147483648 to 4294967295",
@@ -281,6 +304,16 @@ describe("assembler", () => {
       const tooMany = assemble("DB 65537 DUP (0)", { origin: 0 });
       expect(errorsOf(tooMany)).toEqual(["1:4 DUP count 65537 is out of range"]);
       expect(bytes(tooMany)).toEqual([]);
+
+      const wrapped = assemble("DB 0FFFFFFFFh + 2 DUP (0)", { origin: 0 });
+      expect(errorsOf(wrapped)).toEqual(["1:4 DUP count 4294967297 is out of range"]);
+      expect(bytes(wrapped)).toEqual([]);
+
+      const unsafe = assemble("DB 4503599627370496 * 2 DUP (0)", { origin: 0 });
+      expect(unsafe.errors.map((e) => e.message)).toEqual([
+        "expression value 9007199254740992 exceeds the evaluator's exact integer range",
+      ]);
+      expect(bytes(unsafe)).toEqual([]);
 
       // 65536 is the largest count a directive may still repeat.
       const largest = assemble("DB 65536 DUP (1)", { origin: 0 });

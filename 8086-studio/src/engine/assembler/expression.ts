@@ -17,8 +17,10 @@ import type { Token } from "./lexer";
 import { DiagnosticBag } from "./diagnostics";
 
 export interface ExprValue {
-  /** 16-bit-truncated result. */
+  /** Result in the parser's working width, or exact when requested. */
   value: number;
+  /** Exact value while preserveExact mode is active. */
+  exact?: bigint;
   /** False when an undefined symbol was referenced. */
   resolved: boolean;
   /** True when the expression reads the location counter. */
@@ -56,12 +58,17 @@ export class ExpressionParser {
     startAt = 0,
     /** Working width of the expression: 16 for addresses, 32 for `DD`. */
     private readonly mask = 0xffff,
+    /** True when callers need the exact arithmetic result instead of truncation. */
+    private readonly preserveExact = false,
   ) {
     this.pos = startAt;
   }
 
   private resolved(value: number, usesLocationCounter = false): ExprValue {
-    return { value: truncate(value, this.mask), resolved: true, usesLocationCounter };
+    if (!this.preserveExact) {
+      return { value: truncate(value, this.mask), resolved: true, usesLocationCounter };
+    }
+    return { value, exact: BigInt(value), resolved: true, usesLocationCounter };
   }
 
   get position(): number {
@@ -97,20 +104,28 @@ export class ExpressionParser {
       if (token.text === "+") {
         this.pos++;
         const right = this.parseTerm();
-        left = combine(left, right, (a, b) => (a + b) & this.mask, this.mask);
+        left = this.preserveExact
+          ? combineExact(left, right, (a, b) => a + b, token, this.diagnostics)
+          : combine(left, right, (a, b) => a + b, this.mask, this.preserveExact);
       } else if (token.text === "-") {
         this.pos++;
         const right = this.parseTerm();
-        left = combine(left, right, (a, b) => (a - b) & this.mask, this.mask);
+        left = this.preserveExact
+          ? combineExact(left, right, (a, b) => a - b, token, this.diagnostics)
+          : combine(left, right, (a, b) => a - b, this.mask, this.preserveExact);
       } else if (token.text === "|") {
         this.pos++;
         const right = this.parseTerm();
-        left = combine(left, right, (a, b) => a | b, this.mask);
+        left = this.preserveExact
+          ? combineExact(left, right, (a, b) => a | b, token, this.diagnostics)
+          : combine(left, right, (a, b) => a | b, this.mask, this.preserveExact);
       } else if (token.text === "~") {
         this.pos++;
         const right = this.parseTerm();
         // ~x is x XOR 0xFFFF, i.e. a bitwise complement within 16 bits.
-        left = combine(left, right, (a) => ~a & this.mask, this.mask);
+        left = this.preserveExact
+          ? exactUnary(right, (a) => ~a, token, this.diagnostics)
+          : combine(left, right, (a) => ~a, this.mask, this.preserveExact);
       } else {
         break;
       }
@@ -126,7 +141,9 @@ export class ExpressionParser {
       if (token.text === "*") {
         this.pos++;
         const right = this.parseFactor();
-        left = combine(left, right, (a, b) => (a * b) & this.mask, this.mask);
+        left = this.preserveExact
+          ? combineExact(left, right, (a, b) => a * b, token, this.diagnostics)
+          : combine(left, right, (a, b) => a * b, this.mask, this.preserveExact);
       } else if (token.text === "/") {
         this.pos++;
         const right = this.parseFactor();
@@ -134,20 +151,28 @@ export class ExpressionParser {
           this.diagnostics.error(token.line, token.column, "division by zero in expression");
           left = unresolved;
         } else {
-          left = combine(left, right, (a, b) => (a / b) | 0, this.mask);
+          left = this.preserveExact
+            ? combineExact(left, right, (a, b) => a / b, token, this.diagnostics)
+            : combine(left, right, (a, b) => (a / b) | 0, this.mask, this.preserveExact);
         }
       } else if (token.text === "&") {
         this.pos++;
         const right = this.parseFactor();
-        left = combine(left, right, (a, b) => a & b, this.mask);
+        left = this.preserveExact
+          ? combineExact(left, right, (a, b) => a & b, token, this.diagnostics)
+          : combine(left, right, (a, b) => a & b, this.mask, this.preserveExact);
       } else if (token.text === "<<") {
         this.pos++;
         const right = this.parseFactor();
-        left = combine(left, right, (a, b) => (a << (b & 15)) & this.mask, this.mask);
+        left = this.preserveExact
+          ? combineExact(left, right, (a, b) => a << (b & 15n), token, this.diagnostics)
+          : combine(left, right, (a, b) => a << (b & 15), this.mask, this.preserveExact);
       } else if (token.text === ">>") {
         this.pos++;
         const right = this.parseFactor();
-        left = combine(left, right, (a, b) => a >>> (b & 15), this.mask);
+        left = this.preserveExact
+          ? combineExact(left, right, (a, b) => a >> (b & 15n), token, this.diagnostics)
+          : combine(left, right, (a, b) => a >>> (b & 15), this.mask, this.preserveExact);
       } else {
         break;
       }
@@ -174,7 +199,9 @@ export class ExpressionParser {
       if (token.text === "-") {
         this.pos++;
         const operand = this.parseFactor();
-        return combine(operand, operand, (a) => -a & this.mask, this.mask);
+        return this.preserveExact
+          ? exactUnary(operand, (a) => -a, token, this.diagnostics)
+          : combine(operand, operand, (a) => -a, this.mask, this.preserveExact);
       }
       if (token.text === "+") {
         this.pos++;
@@ -183,24 +210,38 @@ export class ExpressionParser {
       if (token.text === "~") {
         this.pos++;
         const operand = this.parseFactor();
-        return combine(operand, operand, (a) => ~a & this.mask, this.mask);
+        return this.preserveExact
+          ? exactUnary(operand, (a) => ~a, token, this.diagnostics)
+          : combine(operand, operand, (a) => ~a, this.mask, this.preserveExact);
       }
       if (token.text === "<") {
         // LOW x
         this.pos++;
         const operand = this.parseFactor();
-        return combine(operand, operand, (a) => a & 0xff, this.mask);
+        return this.preserveExact
+          ? exactUnary(operand, (a) => a & 0xffn, token, this.diagnostics)
+          : combine(operand, operand, (a) => a & 0xff, this.mask, this.preserveExact);
       }
       if (token.text === ">") {
         // HIGH x
         this.pos++;
         const operand = this.parseFactor();
-        return combine(operand, operand, (a) => (a >> 8) & 0xff, this.mask);
+        return this.preserveExact
+          ? exactUnary(operand, (a) => (a >> 8n) & 0xffn, token, this.diagnostics)
+          : combine(operand, operand, (a) => (a >> 8) & 0xff, this.mask, this.preserveExact);
       }
     }
 
     if (token.kind === "number") {
       this.pos++;
+      if (this.preserveExact && !Number.isSafeInteger(token.value)) {
+        this.diagnostics.error(
+          token.line,
+          token.column,
+          `expression value ${token.text} exceeds the evaluator's exact integer range`,
+        );
+        return unresolved;
+      }
       return this.resolved(token.value);
     }
 
@@ -272,7 +313,20 @@ export class ExpressionParser {
 
     if (name === "LOW" || name === "HIGH") {
       const operand = this.parseFactor();
-      return combine(operand, operand, (a) => (name === "LOW" ? a & 0xff : (a >> 8) & 0xff), this.mask);
+      return this.preserveExact
+        ? exactUnary(
+            operand,
+            (a) => (name === "LOW" ? a & 0xffn : (a >> 8n) & 0xffn),
+            token,
+            this.diagnostics,
+          )
+        : combine(
+            operand,
+            operand,
+            (a) => (name === "LOW" ? a & 0xff : (a >> 8) & 0xff),
+            this.mask,
+            this.preserveExact,
+          );
     }
 
     const value = this.symbols.lookup(name);
@@ -291,6 +345,14 @@ export class ExpressionParser {
       // Forward reference or a genuine typo: defer the verdict to pass 2, but
       // remember the position so pass 2 can report it precisely.
       unresolvedReferences.push({ name, line: token.line, column: token.column });
+      return unresolved;
+    }
+    if (this.preserveExact && !Number.isSafeInteger(value)) {
+      this.diagnostics.error(
+        token.line,
+        token.column,
+        `expression value ${value} exceeds the evaluator's exact integer range`,
+      );
       return unresolved;
     }
     return this.resolved(value);
@@ -313,6 +375,7 @@ function combine(
   b: ExprValue,
   fn: (x: number, y: number) => number,
   mask: number,
+  preserveExact: boolean,
 ): ExprValue {
   if (!a.resolved || !b.resolved) {
     return {
@@ -322,8 +385,46 @@ function combine(
     };
   }
   return {
-    value: fn(a.value, b.value) & mask,
+    value: preserveExact ? fn(a.value, b.value) : fn(a.value, b.value) & mask,
     resolved: true,
     usesLocationCounter: a.usesLocationCounter || b.usesLocationCounter,
   };
 }
+
+function exactUnary(
+  operand: ExprValue,
+  fn: (value: bigint) => bigint,
+  _token: Token,
+  _diagnostics: DiagnosticBag,
+): ExprValue {
+  if (!operand.resolved) {
+    return { value: 0, resolved: false, usesLocationCounter: operand.usesLocationCounter };
+  }
+  return {
+    value: 0,
+    exact: fn(operand.exact ?? BigInt(operand.value)),
+    resolved: true,
+    usesLocationCounter: operand.usesLocationCounter,
+  };
+}
+
+function combineExact(
+  a: ExprValue,
+  b: ExprValue,
+  fn: (x: bigint, y: bigint) => bigint,
+  _token: Token,
+  _diagnostics: DiagnosticBag,
+): ExprValue {
+  if (!a.resolved || !b.resolved) {
+    return { value: 0, resolved: false, usesLocationCounter: a.usesLocationCounter || b.usesLocationCounter };
+  }
+  const left = a.exact ?? BigInt(a.value);
+  const right = b.exact ?? BigInt(b.value);
+  return {
+    value: 0,
+    exact: fn(left, right),
+    resolved: true,
+    usesLocationCounter: a.usesLocationCounter || b.usesLocationCounter,
+  };
+}
+

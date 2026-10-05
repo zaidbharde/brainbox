@@ -473,10 +473,10 @@ function runStatement(ctx: PassContext, statement: Statement): void {
     // Equates are evaluated in the widest window for the reason data elements
     // are: `n EQU -1` has to reach `DB n` as -1 rather than as the 65535 that
     // 16-bit truncation would leave behind, and `n EQU 10000h` has to reach
-    // `DW n` as 65536 so the range check can refuse it. A consumer that wants
-    // a narrower value re-truncates on the way out (the expression evaluator
-    // masks at its own working width), so instruction operands are unchanged.
-    const value = evaluate(ctx, rest.slice(1), line, rest[1]?.column ?? column, SCALAR_WINDOW);
+    // `DW n` as 65536 so the range check can refuse it. The evaluator now keeps
+    // the exact arithmetic result for these scalar contexts, so overflow stays
+    // visible until the range check runs.
+    const value = evaluate(ctx, rest.slice(1), line, rest[1]?.column ?? column, SCALAR_WINDOW, true);
     ctx.symbols.define(
       { name: label, kind: "equate", value: value.value, line, column, defined: true },
       ctx.diagnostics,
@@ -642,7 +642,7 @@ function runDirective(
       return;
     }
     case "ORG": {
-      const value = evaluate(ctx, args, line, argColumn);
+      const value = evaluate(ctx, args, line, argColumn, 0xffffffff, true);
       if (!value.resolved) {
         ctx.symbols.reference(firstName(args) ?? "", line, argColumn);
         return;
@@ -675,7 +675,7 @@ function runDirective(
       return;
     }
     case ".STACK": {
-      const value = evaluate(ctx, args, line, argColumn);
+      const value = evaluate(ctx, args, line, argColumn, 0xffffffff, true);
       if (!value.resolved) return;
       ctx.stackSize = value.value;
       return;
@@ -799,7 +799,7 @@ function emitData(
       // bits `65536 DUP` folds to `0 DUP` and `-1 DUP` to 65535 copies, both
       // silently, and the range check below could never see either.
       countAt = { line: args[i].line, column: args[i].column };
-      const countExpr = evaluate(ctx, args.slice(i, afterCount), line, args[i].column, SCALAR_WINDOW);
+      const countExpr = evaluate(ctx, args.slice(i, afterCount), line, args[i].column, SCALAR_WINDOW, true);
       count = countExpr.value;
       i = afterCount + 1;
     }
@@ -893,7 +893,7 @@ function readDataElements(
         // its byte(s) and every address after it stays where it was.
         out.push(0);
       } else {
-        const value = evaluate(ctx, elementTokens, line, elementColumn, SCALAR_WINDOW);
+        const value = evaluate(ctx, elementTokens, line, elementColumn, SCALAR_WINDOW, true);
         if (!value.resolved) {
           const name = firstName(elementTokens);
           if (name) ctx.symbols.reference(name, elementLine, elementColumn);
@@ -1100,16 +1100,35 @@ function evaluate(
    * result themselves.
    */
   mask = 0xffff,
+  preserveExact = false,
 ): { value: number; resolved: boolean } {
   if (args.length === 0) {
     ctx.diagnostics.error(line, column, "expected an expression");
     return { value: 0, resolved: false };
   }
-  const parser = new ExpressionParser(args, makeResolver(ctx, ctx.current.counter), ctx.diagnostics, 0, mask);
+  const parser = new ExpressionParser(
+    args,
+    makeResolver(ctx, ctx.current.counter),
+    ctx.diagnostics,
+    0,
+    mask,
+    preserveExact,
+  );
   const result = parser.parse();
   if (parser.position < args.length) {
     const extra = args[parser.position];
     ctx.diagnostics.error(extra.line, extra.column, `unexpected ${JSON.stringify(extra.text)} in expression`);
+  }
+  if (preserveExact && result.resolved) {
+    if (result.exact === undefined) {
+      ctx.diagnostics.error(line, column, "expression did not preserve an exact result");
+      return { value: 0, resolved: false };
+    }
+    if (result.exact < BigInt(Number.MIN_SAFE_INTEGER) || result.exact > BigInt(Number.MAX_SAFE_INTEGER)) {
+      ctx.diagnostics.error(line, column, `expression value ${result.exact.toString()} exceeds the evaluator's exact integer range`);
+      return { value: 0, resolved: false };
+    }
+    return { value: Number(result.exact), resolved: true };
   }
   return { value: result.value, resolved: result.resolved };
 }
