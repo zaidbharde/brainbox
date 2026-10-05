@@ -285,9 +285,11 @@ found by writing an example and having it produce the wrong answer:
   it. Left unfixed and documented rather than fixed in passing, since it is a behaviour
   change to the engine the brief said to preserve.
 - **The two engines disagree about `[SP+n]`.** Legacy reads a parameter off the stack;
-  v2 loops until it hits the step limit. The library's procedure example uses `CALL`
-  /`RET` and a callee-saved register instead, which is honest about the difference
-  rather than quietly picking the engine that works.
+  v2 will not assemble the spelling at all — no 8086 encoding can name SP in an
+  effective address — and reports `SP cannot be used in an 8086 effective address`.
+  The library's procedure example uses `CALL`/`RET` and a callee-saved register
+  instead, which is honest about the difference rather than quietly picking the
+  engine that works.
 
 
 ## The commits, in the order they were meant to be read

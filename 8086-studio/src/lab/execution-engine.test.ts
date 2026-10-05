@@ -470,6 +470,34 @@ describe('where the engines genuinely differ', () => {
     // `MOV AX, imm16` at 0100h, so the string is after the four instructions.
     expect(dataAt('v2')).toBe(0x0108);
   });
+
+  it('reads a stack argument on the legacy and will not assemble one on v2', () => {
+    // `[SP+4]` is not an 8086 effective address: the r/m field spells BX, BP,
+    // SI and DI, and no encoding names SP. The legacy never encodes anything —
+    // it interprets operand text — so SP+4 computes like any register
+    // expression and reads as a flat address. The new assembler refuses rather
+    // than invent an encoding, and refuses with the reason, so a program
+    // written this way does not load on v2 at all. The legacy side is pinned,
+    // not endorsed: it is left alone, and the procedure example in the library
+    // uses neither spelling (docs/engine-v2-divergences.md).
+    const source = [
+      'MOV SP, 0200h',
+      'MOV WORD PTR [0204h], 1234h', // what [SP+4] must find
+      'MOV AX, [SP+4]',
+      'HLT',
+    ].join('\n');
+
+    const legacy = session('legacy', source);
+    for (let i = 1; i <= 10 && !legacy.isFinished(); i++) legacy.step(i, 0);
+    expect(legacy.state.registers.AX).toBe(0x1234);
+    expect(legacy.state.error).toBeFalsy();
+
+    const { session: v2, diagnostics } = createSession('v2', source);
+    expect(v2).toBeNull();
+    expect(diagnostics.map((d) => d.message).join()).toContain(
+      'SP cannot be used in an 8086 effective address',
+    );
+  });
 });
 
 /**

@@ -621,6 +621,23 @@ describe("assembler", () => {
       },
     );
 
+    // A displacement does not make SP addressable. The r/m field of an 8086
+    // ModR/M byte spells BX, BP, SI and DI, alone or paired; SP appears only in
+    // the SIB byte, which does not exist until the 386, so `[SP+n]` has no
+    // encoding at all. The bare `[SP]` is rejected above, and this is the
+    // spelling a procedure reads its arguments from on the legacy, where it
+    // works -- see docs/engine-v2-divergences.md and the cross-engine pin in
+    // src/lab/execution-engine.test.ts.
+    it.each(["MOV AX, [SP+4]", "MOV [SP+2], AX", "MOV AX, [SP-2]"])(
+      "rejects a displacement on SP, which no 8086 encoding can name: %s",
+      (source) => {
+        const result = assemble(source, { origin: 0 });
+        expect(errorsOf(result).join()).toContain(
+          "SP cannot be used in an 8086 effective address",
+        );
+      },
+    );
+
     it.each([
       ["MOV AX", "[BX]"],
       ["MOV AX", "[BP]"],

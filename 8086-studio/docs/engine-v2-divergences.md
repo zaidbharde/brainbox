@@ -261,12 +261,22 @@ existing legacy programs do.
 
 ### The engines disagree about `[SP+n]`
 
-The legacy reads a procedure argument off the stack at `[SP+4]`; the new engine does
-not implement the displacement, and a loop reading it runs until the step limit and is
-cancelled. There is no spelling of a stack argument that works on both. The example
-library's procedure example therefore demonstrates `CALL`/`RET` and callee-saved
-registers instead of parameters, which is honest about the difference rather than
-picking the engine that happens to work.
+The legacy reads a procedure argument off the stack at `[SP+4]`; the new engine
+will not assemble the spelling at all. `[SP+n]` is not an 8086 effective
+address — the r/m field spells BX, BP, SI and DI, alone or paired, and there is
+no encoding that names SP — so the new assembler reports `SP cannot be used in
+an 8086 effective address; use BX, BP, SI, or DI` and no session loads. There is
+no spelling of a stack argument that works on both. The example library's
+procedure example therefore demonstrates `CALL`/`RET` and callee-saved
+registers instead of parameters, which is honest about the difference rather
+than picking the engine that happens to work.
+
+The legacy is left exactly as it was: its assembler interprets operand text
+rather than encoding bytes, so `SP+4` computes like any other register
+expression and reads as a flat address. Both halves are pinned —
+`src/lab/execution-engine.test.ts` reads the word on the legacy and refuses the
+source on the new engine, and `src/engine/assembler/assemble.test.ts` covers
+the refusal on its own.
 
 ## Bugs that are fixed, and how each was found
 
