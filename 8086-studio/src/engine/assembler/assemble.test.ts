@@ -204,6 +204,108 @@ describe("assembler", () => {
     });
   });
 
+  /**
+   * A scalar that does not fit the storage its directive reserves has to be
+   * refused, not folded into whatever the low bits happen to hold. The three
+   * shapes below used to assemble cleanly to `2Ch`, `7Fh` and `0000h`.
+   */
+  describe("data value ranges", () => {
+    it.each([
+      ["DB 300", "1:4", "DB value 300 is out of range; a byte holds -128 to 255"],
+      ["DB -129", "1:4", "DB value -129 is out of range; a byte holds -128 to 255"],
+      ["DW 10000h", "1:4", "DW value 65536 is out of range; a word holds -32768 to 65535"],
+      ["DD 100000000h", "1:4", "DD value 4294967296 is out of range; a dword holds -2147483648 to 4294967295"],
+    ])("rejects %s instead of truncating it", (source, position, message) => {
+      const result = assemble(source, { origin: 0 });
+      expect(errorsOf(result)).toEqual([`${position} ${message}`]);
+    });
+
+    it.each([
+      ["DB 256", "DB value 256 is out of range; a byte holds -128 to 255"],
+      ["DB 0FFFFh", "DB value 65535 is out of range; a byte holds -128 to 255"],
+      ["DW -32769", "DW value -32769 is out of range; a word holds -32768 to 65535"],
+      ["DW 0FFFFh + 1", "DW value 65536 is out of range; a word holds -32768 to 65535"],
+      ["DB 0FFh * 2", "DB value 510 is out of range; a byte holds -128 to 255"],
+      [
+        "DD -2147483649",
+        "DD value -2147483649 is out of range; a dword holds -2147483648 to 4294967295",
+      ],
+    ])("rejects %s as an expression too", (source, message) => {
+      const result = assemble(source, { origin: 0 });
+      expect(result.errors.map((e) => e.message)).toEqual([message]);
+    });
+
+    it.each([
+      ["DB", "-1", [0xff]],
+      ["DB", "-128", [0x80]],
+      ["DB", "255", [0xff]],
+      ["DB", "0FFh", [0xff]],
+      ["DB", "'A'", [0x41]],
+      ["DB", '"Hi"', [0x48, 0x69]],
+      ["DW", "-1", [0xff, 0xff]],
+      ["DW", "-32768", [0x00, 0x80]],
+      ["DW", "65535", [0xff, 0xff]],
+      ["DW", "0FFFFh", [0xff, 0xff]],
+      ["DW", "8000h", [0x00, 0x80]],
+      ["DD", "-1", [0xff, 0xff, 0xff, 0xff]],
+      ["DD", "-2147483648", [0x00, 0x00, 0x00, 0x80]],
+      ["DD", "0FFFFFFFFh", [0xff, 0xff, 0xff, 0xff]],
+      ["DD", "7FFFFFFFh", [0xff, 0xff, 0xff, 0x7f]],
+      ["DD", "11223344h", [0x44, 0x33, 0x22, 0x11]],
+    ])("still accepts %s %s", (directive, value, expected) => {
+      const result = assemble(`${directive} ${value}`, { origin: 0 });
+      expect(errorsOf(result)).toEqual([]);
+      expect(bytes(result)).toEqual(expected);
+    });
+
+    it("keeps the layout after a rejected value", () => {
+      const result = assemble("DB 1, 300, 2\nafter:", { origin: 0 });
+      expect(result.errors).toHaveLength(1);
+      expect(bytes(result)).toEqual([1, 0, 2]);
+      expect(result.symbols.lookup("AFTER")?.value).toBe(3);
+    });
+
+    it("reports one diagnostic for one invalid initializer inside a DUP", () => {
+      const result = assemble("DB 3 DUP (300)", { origin: 0 });
+      expect(errorsOf(result)).toEqual([
+        "1:11 DB value 300 is out of range; a byte holds -128 to 255",
+      ]);
+      expect(bytes(result)).toEqual([0, 0, 0]);
+    });
+
+    it("checks the DUP count as a scalar too", () => {
+      const negative = assemble("DB -1 DUP (0)", { origin: 0 });
+      expect(errorsOf(negative)).toEqual(["1:4 DUP count -1 is out of range"]);
+      expect(bytes(negative)).toEqual([]);
+
+      const tooMany = assemble("DB 65537 DUP (0)", { origin: 0 });
+      expect(errorsOf(tooMany)).toEqual(["1:4 DUP count 65537 is out of range"]);
+      expect(bytes(tooMany)).toEqual([]);
+
+      // 65536 is the largest count a directive may still repeat.
+      const largest = assemble("DB 65536 DUP (1)", { origin: 0 });
+      expect(errorsOf(largest)).toEqual([]);
+      expect(bytes(largest)).toHaveLength(0x10000);
+    });
+
+    it("checks a value named by an equate", () => {
+      const bad = assemble("n EQU 300\nDB n", { origin: 0 });
+      expect(errorsOf(bad)).toEqual(["2:4 DB value 300 is out of range; a byte holds -128 to 255"]);
+      // A negative equate is still a negative value, not 65535 by the time a
+      // byte directive looks at it.
+      const good = assemble("n EQU -1\nDB n", { origin: 0 });
+      expect(errorsOf(good)).toEqual([]);
+      expect(bytes(good)).toEqual([0xff]);
+    });
+
+    it("accepts a label as a data value while it fits", () => {
+      const result = assemble("DB 9\nbuf:\nDB 1\nhere DW buf", { origin: 0 });
+      expect(errorsOf(result)).toEqual([]);
+      expect(bytes(result)).toEqual([0x09, 0x01, 0x01, 0x00]);
+      expect(result.symbols.lookup("BUF")?.value).toBe(1);
+    });
+  });
+
   describe("layout", () => {
     it("honours ORG", () => {
       const result = assemble("ORG 200h\nDB 1", { origin: 0 });

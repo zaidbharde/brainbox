@@ -470,7 +470,13 @@ function runStatement(ctx: PassContext, statement: Statement): void {
   // rejected as a redefinition. EQU is also a directive word in its own right,
   // so the generic directive dispatch would misread it as a standalone statement.
   if (label !== undefined && isEquateForm(rest[0])) {
-    const value = evaluate(ctx, rest.slice(1), line, rest[1]?.column ?? column);
+    // Equates are evaluated in the widest window for the reason data elements
+    // are: `n EQU -1` has to reach `DB n` as -1 rather than as the 65535 that
+    // 16-bit truncation would leave behind, and `n EQU 10000h` has to reach
+    // `DW n` as 65536 so the range check can refuse it. A consumer that wants
+    // a narrower value re-truncates on the way out (the expression evaluator
+    // masks at its own working width), so instruction operands are unchanged.
+    const value = evaluate(ctx, rest.slice(1), line, rest[1]?.column ?? column, SCALAR_WINDOW);
     ctx.symbols.define(
       { name: label, kind: "equate", value: value.value, line, column, defined: true },
       ctx.diagnostics,
@@ -781,6 +787,7 @@ function emitData(
     // `count DUP (value)`. DUP is a word, not a punctuator, so it is found as
     // an identifier rather than through the punctuator table.
     let count: number | undefined;
+    let countAt = { line, column };
     const afterCount = findWord(args, i, "DUP");
     if (args[i]?.kind === "ident" && args[i].text.toUpperCase() === "DUP") {
       ctx.diagnostics.error(args[i].line, args[i].column, "DUP must be preceded by a count");
@@ -788,7 +795,11 @@ function emitData(
       continue;
     }
     if (afterCount >= 0) {
-      const countExpr = evaluate(ctx, args.slice(i, afterCount), line, args[i].column);
+      // The count is a scalar too, so it is read in the widest window: at 16
+      // bits `65536 DUP` folds to `0 DUP` and `-1 DUP` to 65535 copies, both
+      // silently, and the range check below could never see either.
+      countAt = { line: args[i].line, column: args[i].column };
+      const countExpr = evaluate(ctx, args.slice(i, afterCount), line, args[i].column, SCALAR_WINDOW);
       count = countExpr.value;
       i = afterCount + 1;
     }
@@ -822,7 +833,7 @@ function emitData(
       continue;
     }
     if (count < 0 || count > 0x10000) {
-      ctx.diagnostics.error(startLine, startColumn, `DUP count ${count} is out of range`);
+      ctx.diagnostics.error(countAt.line, countAt.column, `DUP count ${count} is out of range`);
       continue;
     }
     for (let n = 0; n < count; n++) {
@@ -854,6 +865,8 @@ function readDataElements(
     const end = comma < 0 ? args.length : comma;
 
     const token = args[i];
+    const elementLine = token?.line ?? line;
+    const elementColumn = token?.column ?? column;
     if (token?.kind === "string" && elementSize === 8) {
       for (const ch of token.string ?? "") out.push(ch.charCodeAt(0) & 0xff);
     } else if (token?.kind === "question") {
@@ -864,19 +877,33 @@ function readDataElements(
     ) {
       out.push(0);
     } else {
-      const value = evaluate(
-        ctx,
-        args.slice(i, end),
-        line,
-        args[i]?.column ?? column,
-        elementSize === 32 ? 0xffffffff : 0xffff,
-      );
-      if (!value.resolved) {
-        const name = firstName(args.slice(i, end));
-        if (name) ctx.symbols.reference(name, args[i]?.line ?? line, args[i]?.column ?? column);
+      const elementTokens = args.slice(i, end);
+      // A literal -- and a sign in front of one -- is judged on the value that
+      // was written, before the evaluator sees it: the evaluator works in a
+      // 32-bit window, so a wider literal (`DD 100000000h`) has already folded
+      // to 0 and a negation past that window (`DD -2147483649`) has already
+      // folded back into range by the time a check on the result could run.
+      // Every other element is evaluated in that window and then judged, which
+      // is what keeps `DB -1` -1 and `DW 10000h` 65536 at the moment the range
+      // is measured.
+      const written = writtenValue(elementTokens);
+      if (written !== undefined && !fitsScalar(elementSize, written)) {
+        ctx.diagnostics.error(elementLine, elementColumn, scalarRangeMessage(elementSize, written));
+        // Zero stands in for the refused value so the directive still reserves
+        // its byte(s) and every address after it stays where it was.
         out.push(0);
       } else {
-        out.push(value.value);
+        const value = evaluate(ctx, elementTokens, line, elementColumn, SCALAR_WINDOW);
+        if (!value.resolved) {
+          const name = firstName(elementTokens);
+          if (name) ctx.symbols.reference(name, elementLine, elementColumn);
+          out.push(0);
+        } else if (!fitsScalar(elementSize, value.value)) {
+          ctx.diagnostics.error(elementLine, elementColumn, scalarRangeMessage(elementSize, value.value));
+          out.push(0);
+        } else {
+          out.push(value.value);
+        }
       }
     }
     i = end + 1;
@@ -884,6 +911,66 @@ function readDataElements(
   return out;
 }
 
+/**
+ * What each data directive may hold.
+ *
+ * Literals are written unsigned here -- decimal, hex, binary or a character --
+ * but an expression may negate one, and `DB -1` is the same byte as `DB 0FFh`
+ * on both engines in this project. So every width accepts its signed range as
+ * well as its unsigned one, and a value past either end does not fit the
+ * storage the directive reserves: `DB 300`, `DB -129` and `DW 10000h` are
+ * errors rather than whatever their low bits happen to spell.
+ */
+const SCALAR_RANGES: Record<8 | 16 | 32, { directive: string; datum: string; min: number; max: number }> = {
+  8: { directive: "DB", datum: "byte", min: -128, max: 0xff },
+  16: { directive: "DW", datum: "word", min: -0x8000, max: 0xffff },
+  32: { directive: "DD", datum: "dword", min: -0x8000_0000, max: 0xffff_ffff },
+};
+
+/**
+ * Widest window the expression evaluator can hold, used wherever a value has
+ * to survive long enough to be range-checked rather than truncated first.
+ */
+const SCALAR_WINDOW = 0xffffffff;
+
+/** True when `value` fits the storage a directive of `elementSize` bits reserves. */
+function fitsScalar(elementSize: 8 | 16 | 32, value: number): boolean {
+  const { min, max } = SCALAR_RANGES[elementSize];
+  return value >= min && value <= max;
+}
+
+/**
+ * The exact value of an element that is nothing but a literal, with an
+ * optional sign, or `undefined` when it is an expression and only the
+ * evaluator can say what it comes to.
+ */
+function writtenValue(tokens: readonly Token[]): number | undefined {
+  if (tokens.length === 1 && tokens[0].kind === "number") return tokens[0].value;
+  if (
+    tokens.length === 2 &&
+    tokens[0].kind === "punct" &&
+    tokens[0].text === "-" &&
+    tokens[1].kind === "number"
+  ) {
+    return -tokens[1].value;
+  }
+  return undefined;
+}
+
+function scalarRangeMessage(elementSize: 8 | 16 | 32, value: number): string {
+  const { directive, datum, min, max } = SCALAR_RANGES[elementSize];
+  return `${directive} value ${value} is out of range; a ${datum} holds ${min} to ${max}`;
+}
+
+/**
+ * Emit one scalar of `elementSize` bits, little-endian.
+ *
+ * Values arrive already checked against `SCALAR_RANGES` by `readDataElements`,
+ * which is what knows each element's source position and runs once per
+ * initializer rather than once per byte of a `DUP`. The masks below therefore
+ * only turn a negative value into its two's-complement bytes; there is no bit
+ * left for them to drop.
+ */
 function writeScalar(ctx: PassContext, elementSize: 8 | 16 | 32, value: number): void {
   if (elementSize === 32) {
     ctx.current.putByte(value & 0xff);
@@ -1006,7 +1093,12 @@ function evaluate(
   args: readonly Token[],
   line: number,
   column: number,
-  /** Working width; `DD` widens the expression to 32 bits. */
+  /**
+   * Working width of the expression. 16 bits by default, because 8086
+   * arithmetic is 16-bit; callers that must see a value as written rather than
+   * as the width they want pass `SCALAR_WINDOW` instead and range-check the
+   * result themselves.
+   */
   mask = 0xffff,
 ): { value: number; resolved: boolean } {
   if (args.length === 0) {
